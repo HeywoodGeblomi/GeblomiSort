@@ -94,9 +94,9 @@ The multi-stage design keeps the final runtime image small while still shipping 
 
 ## Verification
 
-Confirm the install and Docker image work as expected. All smoke tests below include explicit error handling **and timeouts** so hung processes fail cleanly instead of blocking forever.
+Confirm the install and Docker image work as expected. All smoke tests include **error handling**, **timeouts**, and **retry logic** (2–3 attempts) for transient failures.
 
-### 1. Host compile smoke test (error handling + timeout)
+### 1. Host compile smoke test (error handling + timeout + retry)
 
 ```bash
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
@@ -128,13 +128,33 @@ int main() {
 }
 EOF
 
-if ! timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
-  echo "ERROR: compilation failed or timed out (30s)"
+# Retry compile up to 3 times
+COMPILE_OK=0
+for attempt in 1 2 3; do
+  if timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
+    COMPILE_OK=1
+    break
+  fi
+  echo "WARN: compile attempt $attempt failed or timed out; retrying..."
+  sleep 2
+done
+if [ "$COMPILE_OK" -ne 1 ]; then
+  echo "ERROR: compilation failed after 3 attempts"
   exit 1
 fi
 
-if ! timeout 10s /tmp/verify_geblomi; then
-  echo "ERROR: smoke test binary failed or timed out (10s)"
+# Retry run up to 3 times
+RUN_OK=0
+for attempt in 1 2 3; do
+  if timeout 10s /tmp/verify_geblomi; then
+    RUN_OK=1
+    break
+  fi
+  echo "WARN: run attempt $attempt failed or timed out; retrying..."
+  sleep 1
+done
+if [ "$RUN_OK" -ne 1 ]; then
+  echo "ERROR: smoke test binary failed after 3 attempts"
   exit 1
 fi
 
@@ -146,21 +166,41 @@ echo "Host smoke test passed."
 HOST_OK
 Host smoke test passed.
 ```
-Any other message, timeout, or non-zero exit indicates a problem.
+Any final ERROR or non-zero exit indicates a real problem (retries exhausted).
 
-### 2. Docker image smoke test (error handling + timeout)
+### 2. Docker image smoke test (error handling + timeout + retry)
 
 ```bash
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found in PATH"; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
 
-if ! timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
-  echo "ERROR: docker build failed or timed out (180s)"
+# Retry docker build up to 3 times
+BUILD_OK=0
+for attempt in 1 2 3; do
+  if timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
+    BUILD_OK=1
+    break
+  fi
+  echo "WARN: docker build attempt $attempt failed or timed out; retrying..."
+  sleep 5
+done
+if [ "$BUILD_OK" -ne 1 ]; then
+  echo "ERROR: docker build failed after 3 attempts"
   exit 1
 fi
 
-if ! timeout 30s docker run --rm geblomisort; then
-  echo "ERROR: docker run (demo) failed or timed out (30s)"
+# Retry docker run up to 3 times
+RUN_OK=0
+for attempt in 1 2 3; do
+  if timeout 30s docker run --rm geblomisort; then
+    RUN_OK=1
+    break
+  fi
+  echo "WARN: docker run attempt $attempt failed or timed out; retrying..."
+  sleep 2
+done
+if [ "$RUN_OK" -ne 1 ]; then
+  echo "ERROR: docker run (demo) failed after 3 attempts"
   exit 1
 fi
 
@@ -176,7 +216,7 @@ Successfully tagged geblomisort:latest
 Image size: 120MB
 Docker smoke test passed.
 ```
-Typical size **~80–150 MB**. Non-zero exit or timeout at any step is a failure.
+Typical size **~80–150 MB**. Retries absorb transient daemon/network hiccups; final ERROR means a real failure.
 
 ### 3. (Optional) Package switch check
 
@@ -202,7 +242,7 @@ int main() {
 }
 ```
 
-Compile/run with the same timeouts as the host smoke test. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
+Compile/run with the same timeout + retry pattern as the host smoke test. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

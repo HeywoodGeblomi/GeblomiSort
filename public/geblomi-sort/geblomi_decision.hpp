@@ -1,28 +1,46 @@
 /**
- * geblomi_decision.hpp — Non-dominated incentive packages for AmalgaSort Phase 1
- * Part of GeblomiSort v2.6
- *
- * Lightweight multi-objective decision helpers.
- * Default package: ScalarizedPreference (high-ROI, preserves v2.5 strengths).
- * Borderline-only activation recommended for zero regression.
- *
- * Team: Benjamin (dominance) + Lucas (packages) + Harper (instrumentation) + Grok
- * Correctness receipt: unit-tested 2026-07-31 (Python proxy + by-construction legacy path).
+ * geblomi_decision.hpp — Non-dominated incentive packages for AmalgaSort
+ * Phase 1 (ScalarizedPreference) + Phase 2A (ParetoDominance, ConfidenceWeighted, Lexicographic)
+ * Default: ScalarizedPreference. Borderline-only recommended.
+ * Team: Benjamin + Lucas + Harper + Grok | 2026-07-31 Phase 2A aggressive
  */
 #pragma once
 #include <cstddef>
+#include <cstdint>
 
 namespace geblomi {
 
-enum class IncentivePackage {
-    ScalarizedPreference,  // default high-ROI
-    ParetoDominance
+enum class IncentivePackage : uint8_t {
+    ScalarizedPreference = 0,
+    ParetoDominance      = 1,
+    ConfidenceWeighted   = 2,
+    Lexicographic        = 3
 };
 
+inline IncentivePackage& current_package() noexcept {
+    static thread_local IncentivePackage pkg = IncentivePackage::ScalarizedPreference;
+    return pkg;
+}
+
+#ifndef GEBLMI_NO_COUNTERS
+struct PackageCounters {
+    uint64_t scalarized = 0;
+    uint64_t pareto     = 0;
+    uint64_t confidence = 0;
+    uint64_t lex        = 0;
+    uint64_t borderline_fires = 0;
+};
+inline PackageCounters& counters() noexcept {
+    static thread_local PackageCounters c;
+    return c;
+}
+#endif
+
 struct ObjVec {
-    float time_proxy = 0.f;   // lower better
-    float adapt_score = 0.f;  // higher better
-    float space_proxy = 0.f;  // lower better (0 for O(1))
+    float time_proxy  = 0.f;
+    float adapt_score = 0.f;
+    float space_proxy = 0.f;
+    float confidence  = 1.f;
 };
 
 inline bool dominates(const ObjVec& a, const ObjVec& b) noexcept {
@@ -39,8 +57,18 @@ inline float scalarize(const ObjVec& v, float w_time = 0.55f, float w_adapt = 0.
     return -w_time * v.time_proxy + w_adapt * v.adapt_score - w_space * v.space_proxy;
 }
 
+inline float scalarize_confidence(const ObjVec& v, float w_time = 0.55f, float w_adapt = 0.30f, float w_space = 0.15f) noexcept {
+    const float base = scalarize(v, w_time, w_adapt, w_space);
+    return base * (0.25f + 0.75f * v.confidence);
+}
+
+inline float scalarize_lex(const ObjVec& v) noexcept {
+    return -v.time_proxy * 1e6f + v.adapt_score * 1e3f - v.space_proxy;
+}
+
 template <size_t K>
-inline size_t select_non_dominated(const ObjVec (&cands)[K], size_t n_cands) noexcept {
+inline size_t select_non_dominated(const ObjVec (&cands)[K], size_t n_cands,
+                                   IncentivePackage pkg = IncentivePackage::ScalarizedPreference) noexcept {
     if (n_cands == 0) return 0;
     bool is_nd[K] = {};
     size_t nd_count = 0;
@@ -58,13 +86,30 @@ inline size_t select_non_dominated(const ObjVec (&cands)[K], size_t n_cands) noe
     float best_score = -1e30f;
     for (size_t i = 0; i < n_cands; ++i) {
         if (nd_count > 0 && !is_nd[i]) continue;
-        const float s = scalarize(cands[i]);
-        if (s > best_score) {
-            best_score = s;
-            best = i;
+        float s = 0.f;
+        switch (pkg) {
+            case IncentivePackage::ParetoDominance: s = scalarize(cands[i]); break;
+            case IncentivePackage::ConfidenceWeighted: s = scalarize_confidence(cands[i]); break;
+            case IncentivePackage::Lexicographic: s = scalarize_lex(cands[i]); break;
+            default: s = scalarize(cands[i]); break;
         }
+        if (s > best_score) { best_score = s; best = i; }
     }
+#ifndef GEBLMI_NO_COUNTERS
+    auto& c = counters();
+    switch (pkg) {
+        case IncentivePackage::ParetoDominance: ++c.pareto; break;
+        case IncentivePackage::ConfidenceWeighted: ++c.confidence; break;
+        case IncentivePackage::Lexicographic: ++c.lex; break;
+        default: ++c.scalarized; break;
+    }
+#endif
     return best;
+}
+
+template <size_t K>
+inline size_t select_non_dominated(const ObjVec (&cands)[K], size_t n_cands) noexcept {
+    return select_non_dominated(cands, n_cands, current_package());
 }
 
 } // namespace geblomi

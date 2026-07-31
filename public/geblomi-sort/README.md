@@ -105,12 +105,12 @@ cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include <vector>
 #include <cassert>
 #include <numeric>
+#include <algorithm>
 int main() {
     std::vector<int> v(1000);
     std::iota(v.rbegin(), v.rend(), 0);   // reverse-sorted
     geblomi::sort(v.begin(), v.end());
     assert(std::is_sorted(v.begin(), v.end()));
-    // greater<>
     geblomi::sort(v.begin(), v.end(), std::greater<>{});
     assert(std::is_sorted(v.begin(), v.end(), std::greater<>{}));
     return 0;
@@ -119,28 +119,42 @@ EOF
 g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi && /tmp/verify_geblomi && echo "HOST_OK"
 ```
 
-Expected: `HOST_OK` (exit code 0).
+**Expected output:**
+```text
+HOST_OK
+```
+Exit code `0`. Any assert failure or non-zero exit means the install is broken.
 
 ### 2. Docker image smoke test
 
 ```bash
 docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort
 docker run --rm geblomisort
-# Optional: confirm image is slim
 docker images geblomisort --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
 ```
 
-Expected: demo runs without error; image size typically ~80–150 MB.
+**Expected output (illustrative):**
+```text
+# during build — ends with something like:
+Successfully tagged geblomisort:latest
+
+# docker run --rm geblomisort
+GeblomiSort demo OK
+# (exact demo text may vary; the important part is exit code 0 and no crash)
+
+# docker images ...
+geblomisort:latest  120MB
+```
+Image size is typically **~80–150 MB** (multi-stage slim runtime). A ~1 GB+ image means the old single-stage Dockerfile was used.
 
 ### 3. (Optional) Package switch check
 
 ```cpp
 geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
-// or HypervolumeProxy, ParetoDominance, etc.
-geblomi::sort(v.begin(), v.end());  // still correct; only borderline routing may differ
+geblomi::sort(v.begin(), v.end());  // still correct on clear data
 ```
 
-All six packages preserve correctness on clear data (borderline-only activation).
+**Expected:** no crash, data remains sorted. All six packages preserve correctness on clear inputs (borderline-only activation).
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

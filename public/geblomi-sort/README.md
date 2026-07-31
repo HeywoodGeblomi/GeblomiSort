@@ -94,15 +94,15 @@ The multi-stage design keeps the final runtime image small while still shipping 
 
 ## Verification
 
-Confirm the install and Docker image work as expected. All smoke tests below include explicit error handling.
+Confirm the install and Docker image work as expected. All smoke tests below include explicit error handling **and timeouts** so hung processes fail cleanly instead of blocking forever.
 
-### 1. Host compile smoke test (with error handling)
+### 1. Host compile smoke test (error handling + timeout)
 
 ```bash
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
 
-# Check compiler is present
 command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found in PATH"; exit 1; }
+command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
 
 cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include "GeblomiSort.hpp"
@@ -128,13 +128,13 @@ int main() {
 }
 EOF
 
-if ! g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
-  echo "ERROR: compilation failed"
+if ! timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
+  echo "ERROR: compilation failed or timed out (30s)"
   exit 1
 fi
 
-if ! /tmp/verify_geblomi; then
-  echo "ERROR: smoke test binary failed"
+if ! timeout 10s /tmp/verify_geblomi; then
+  echo "ERROR: smoke test binary failed or timed out (10s)"
   exit 1
 fi
 
@@ -146,20 +146,21 @@ echo "Host smoke test passed."
 HOST_OK
 Host smoke test passed.
 ```
-Any other message or non-zero exit indicates a problem (missing headers, wrong include path, broken sort, etc.).
+Any other message, timeout, or non-zero exit indicates a problem.
 
-### 2. Docker image smoke test (with error handling)
+### 2. Docker image smoke test (error handling + timeout)
 
 ```bash
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found in PATH"; exit 1; }
+command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
 
-if ! docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
-  echo "ERROR: docker build failed"
+if ! timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
+  echo "ERROR: docker build failed or timed out (180s)"
   exit 1
 fi
 
-if ! docker run --rm geblomisort; then
-  echo "ERROR: docker run (demo) failed"
+if ! timeout 30s docker run --rm geblomisort; then
+  echo "ERROR: docker run (demo) failed or timed out (30s)"
   exit 1
 fi
 
@@ -175,7 +176,7 @@ Successfully tagged geblomisort:latest
 Image size: 120MB
 Docker smoke test passed.
 ```
-Typical size **~80–150 MB**. A ~1 GB+ image means the old single-stage Dockerfile was used. Non-zero exit at any step is a failure.
+Typical size **~80–150 MB**. Non-zero exit or timeout at any step is a failure.
 
 ### 3. (Optional) Package switch check
 
@@ -201,7 +202,7 @@ int main() {
 }
 ```
 
-**Expected:** `PACKAGE_SWITCH_OK` and exit code 0. All six packages preserve correctness on clear data (borderline-only activation).
+Compile/run with the same timeouts as the host smoke test. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

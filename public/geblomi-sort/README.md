@@ -45,7 +45,7 @@ geblomi::sort(v);
 ### 4. (Optional) Select an incentive package
 
 ```cpp
-geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
+geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
 ```
 
 Available: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
@@ -94,67 +94,114 @@ The multi-stage design keeps the final runtime image small while still shipping 
 
 ## Verification
 
-Confirm the install and Docker image work as expected.
+Confirm the install and Docker image work as expected. All smoke tests below include explicit error handling.
 
-### 1. Host compile smoke test
+### 1. Host compile smoke test (with error handling)
 
 ```bash
-cd public/geblomi-sort
+cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
+
+# Check compiler is present
+command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found in PATH"; exit 1; }
+
 cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include "GeblomiSort.hpp"
 #include <vector>
-#include <cassert>
+#include <iostream>
 #include <numeric>
 #include <algorithm>
 int main() {
     std::vector<int> v(1000);
     std::iota(v.rbegin(), v.rend(), 0);   // reverse-sorted
     geblomi::sort(v.begin(), v.end());
-    assert(std::is_sorted(v.begin(), v.end()));
+    if (!std::is_sorted(v.begin(), v.end())) {
+        std::cerr << "FAIL: ascending sort incorrect\n";
+        return 1;
+    }
     geblomi::sort(v.begin(), v.end(), std::greater<>{});
-    assert(std::is_sorted(v.begin(), v.end(), std::greater<>{}));
+    if (!std::is_sorted(v.begin(), v.end(), std::greater<>{})) {
+        std::cerr << "FAIL: descending sort incorrect\n";
+        return 2;
+    }
+    std::cout << "HOST_OK\n";
     return 0;
 }
 EOF
-g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi && /tmp/verify_geblomi && echo "HOST_OK"
+
+if ! g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
+  echo "ERROR: compilation failed"
+  exit 1
+fi
+
+if ! /tmp/verify_geblomi; then
+  echo "ERROR: smoke test binary failed"
+  exit 1
+fi
+
+echo "Host smoke test passed."
 ```
 
 **Expected output:**
 ```text
 HOST_OK
+Host smoke test passed.
 ```
-Exit code `0`. Any assert failure or non-zero exit means the install is broken.
+Any other message or non-zero exit indicates a problem (missing headers, wrong include path, broken sort, etc.).
 
-### 2. Docker image smoke test
+### 2. Docker image smoke test (with error handling)
 
 ```bash
-docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort
-docker run --rm geblomisort
-docker images geblomisort --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found in PATH"; exit 1; }
+
+if ! docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
+  echo "ERROR: docker build failed"
+  exit 1
+fi
+
+if ! docker run --rm geblomisort; then
+  echo "ERROR: docker run (demo) failed"
+  exit 1
+fi
+
+SIZE=$(docker images geblomisort --format '{{.Size}}' 2>/dev/null || echo "unknown")
+echo "Image size: $SIZE"
+echo "Docker smoke test passed."
 ```
 
 **Expected output (illustrative):**
 ```text
-# during build — ends with something like:
 Successfully tagged geblomisort:latest
-
-# docker run --rm geblomisort
-GeblomiSort demo OK
-# (exact demo text may vary; the important part is exit code 0 and no crash)
-
-# docker images ...
-geblomisort:latest  120MB
+...demo output...
+Image size: 120MB
+Docker smoke test passed.
 ```
-Image size is typically **~80–150 MB** (multi-stage slim runtime). A ~1 GB+ image means the old single-stage Dockerfile was used.
+Typical size **~80–150 MB**. A ~1 GB+ image means the old single-stage Dockerfile was used. Non-zero exit at any step is a failure.
 
 ### 3. (Optional) Package switch check
 
 ```cpp
-geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
-geblomi::sort(v.begin(), v.end());  // still correct on clear data
+#include "GeblomiSort.hpp"
+#include <vector>
+#include <iostream>
+#include <numeric>
+#include <algorithm>
+
+int main() {
+    std::vector<int> v(500);
+    std::iota(v.rbegin(), v.rend(), 0);
+
+    geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
+    geblomi::sort(v.begin(), v.end());
+    if (!std::is_sorted(v.begin(), v.end())) {
+        std::cerr << "FAIL: ResourceAware produced unsorted output\n";
+        return 1;
+    }
+    std::cout << "PACKAGE_SWITCH_OK\n";
+    return 0;
+}
 ```
 
-**Expected:** no crash, data remains sorted. All six packages preserve correctness on clear inputs (borderline-only activation).
+**Expected:** `PACKAGE_SWITCH_OK` and exit code 0. All six packages preserve correctness on clear data (borderline-only activation).
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

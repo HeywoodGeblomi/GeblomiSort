@@ -45,7 +45,7 @@ geblomi::sort(v);
 ### 4. (Optional) Select an incentive package
 
 ```cpp
-geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
+geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
 ```
 
 Available: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
@@ -97,21 +97,23 @@ The multi-stage design keeps the final runtime image small while still shipping 
 Confirm the install and Docker image work as expected. Smoke tests include:
 - Explicit error handling
 - Timeouts
-- Retry with **Full Jitter** exponential backoff (AWS-recommended; avoids thundering herd)
+- Retry with **Full Jitter** exponential backoff **+ sub-second resolution** (AWS-recommended; avoids thundering herd)
 
 | Step | Timeout | Retries | Backoff |
 |------|---------|--------|--------|
-| Host compile | 30s | 3 | Full Jitter, base=1s, cap=8s |
-| Host run | 10s | 2 | Full Jitter, base=1s, cap=8s |
-| Docker build | 180s | 3 | Full Jitter, base=1s, cap=8s |
-| Docker run | 30s | 2 | Full Jitter, base=1s, cap=8s |
+| Host compile | 30s | 3 | Full Jitter, base=1s, cap=8s, fractional |
+| Host run | 10s | 2 | Full Jitter, base=1s, cap=8s, fractional |
+| Docker build | 180s | 3 | Full Jitter, base=1s, cap=8s, fractional |
+| Docker run | 30s | 2 | Full Jitter, base=1s, cap=8s, fractional |
 
-> **Note:** `timeout` is provided by GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
+> **Note:** `timeout` is provided by GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`. Fractional `sleep` is supported by GNU coreutils and most modern bashes.
 
-### Shared helper — Full Jitter algorithm
+### Shared helper — Full Jitter with sub-second resolution
 
 ```bash
-# Full Jitter (AWS): sleep = random_between(0, min(cap, base * 2^attempt))
+# Full Jitter (AWS) with sub-second precision:
+#   temp  = min(cap, base * 2^(attempt-1))
+#   sleep = uniform_random(0.0, temp)
 # Ref: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
 sleep_full_jitter() {
   local attempt=$1
@@ -120,10 +122,21 @@ sleep_full_jitter() {
   local exp=$(( base * (1 << (attempt - 1)) ))   # base * 2^(attempt-1)
   local temp=$exp
   if (( temp > cap )); then temp=$cap; fi
-  local delay=0
-  if (( temp > 0 )); then
-    delay=$(( RANDOM % (temp + 1) ))   # uniform [0, temp]
+
+  # Produce a fractional delay in [0.0, temp]
+  # Prefer awk (portable); fall back to $RANDOM scaled to milliseconds
+  local delay
+  if command -v awk >/dev/null 2>&1; then
+    delay=$(awk -v t="$temp" 'BEGIN { srand(); printf "%.3f", rand() * t }')
+  else
+    # Fallback: integer ms → fractional seconds (resolution ~1 ms)
+    local ms=0
+    if (( temp > 0 )); then
+      ms=$(( RANDOM % (temp * 1000 + 1) ))
+    fi
+    delay=$(printf "%d.%03d" $((ms / 1000)) $((ms % 1000)))
   fi
+
   echo "Full Jitter backoff ${delay}s (attempt=$attempt, temp=$temp, cap=$cap)"
   sleep "$delay"
 }
@@ -200,8 +213,8 @@ Host smoke test passed.
 
 **Expected on retry (illustrative):**
 ```text
-WARN: compile attempt 1 failed or timed out — Full Jitter backoff 0s (attempt=1, temp=1, cap=8)
-WARN: compile attempt 2 failed or timed out — Full Jitter backoff 3s (attempt=2, temp=2, cap=8)
+WARN: compile attempt 1 failed or timed out — Full Jitter backoff 0.347s (attempt=1, temp=1, cap=8)
+WARN: compile attempt 2 failed or timed out — Full Jitter backoff 1.812s (attempt=2, temp=2, cap=8)
 HOST_OK
 Host smoke test passed.
 ```
@@ -253,7 +266,7 @@ Image size: 120MB
 Docker smoke test passed.
 ```
 
-Full Jitter draws each sleep uniformly from `[0, min(cap, base·2^(attempt-1))]`, which is the AWS-recommended strategy for minimizing correlated retries (thundering herd).
+Full Jitter with sub-second resolution draws each sleep uniformly from `[0.0, min(cap, base·2^(attempt-1))]`, maximizing desynchronization while remaining pure-bash / awk portable.
 
 ### 3. (Optional) Package switch check
 
@@ -268,7 +281,7 @@ int main() {
     std::vector<int> v(500);
     std::iota(v.rbegin(), v.rend(), 0);
 
-    geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
+    geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
     geblomi::sort(v.begin(), v.end());
     if (!std::is_sorted(v.begin(), v.end())) {
         std::cerr << "FAIL: ResourceAware produced unsorted output\n";
@@ -279,7 +292,7 @@ int main() {
 }
 ```
 
-Compile/run with the same timeout + Full Jitter pattern. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
+Compile/run with the same timeout + Full Jitter (sub-second) pattern. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

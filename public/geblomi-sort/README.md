@@ -45,7 +45,7 @@ geblomi::sort(v);
 ### 4. (Optional) Select an incentive package
 
 ```cpp
-geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
+geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
 ```
 
 Available: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
@@ -94,61 +94,77 @@ The multi-stage design keeps the final runtime image small while still shipping 
 
 ## Verification
 
-Confirm the install and Docker image work as expected. Smoke tests include:
-- Explicit error handling
-- Timeouts
-- Retry with **Full Jitter** exponential backoff **+ sub-second resolution** (AWS-recommended; avoids thundering herd)
+Confirm the install and Docker image work as expected. Smoke tests include error handling, timeouts, and **AWS Full Jitter** retry (sub-second resolution).
 
 | Step | Timeout | Retries | Backoff |
 |------|---------|--------|--------|
-| Host compile | 30s | 3 | Full Jitter, base=1s, cap=8s, fractional |
-| Host run | 10s | 2 | Full Jitter, base=1s, cap=8s, fractional |
-| Docker build | 180s | 3 | Full Jitter, base=1s, cap=8s, fractional |
-| Docker run | 30s | 2 | Full Jitter, base=1s, cap=8s, fractional |
+| Host compile | 30s | 3 | Full Jitter, base=1s, cap=8s |
+| Host run | 10s | 2 | Full Jitter, base=1s, cap=8s |
+| Docker build | 180s | 3 | Full Jitter, base=1s, cap=8s |
+| Docker run | 30s | 2 | Full Jitter, base=1s, cap=8s |
 
-> **Note:** `timeout` is provided by GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`. Fractional `sleep` is supported by GNU coreutils and most modern bashes.
+> **Note:** `timeout` is GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
 
-### Shared helper — Full Jitter with sub-second resolution
+### Implementation snippet (copy-paste)
+
+Drop-in bash helpers for retry + sub-second Full Jitter:
 
 ```bash
-# Full Jitter (AWS) with sub-second precision:
-#   temp  = min(cap, base * 2^(attempt-1))
-#   sleep = uniform_random(0.0, temp)
-# Ref: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+#!/usr/bin/env bash
+# GeblomiSort smoke-test helpers — AWS Full Jitter (sub-second)
+# sleep = Uniform(0, min(cap, base * 2^(attempt-1)))
+
 sleep_full_jitter() {
   local attempt=$1
-  local base=${2:-1}    # base delay in seconds
-  local cap=${3:-8}     # max ceiling
-  local exp=$(( base * (1 << (attempt - 1)) ))   # base * 2^(attempt-1)
+  local base=${2:-1}    # seconds
+  local cap=${3:-8}     # seconds
+  local exp=$(( base * (1 << (attempt - 1)) ))
   local temp=$exp
-  if (( temp > cap )); then temp=$cap; fi
+  (( temp > cap )) && temp=$cap
 
-  # Produce a fractional delay in [0.0, temp]
-  # Prefer awk (portable); fall back to $RANDOM scaled to milliseconds
   local delay
   if command -v awk >/dev/null 2>&1; then
     delay=$(awk -v t="$temp" 'BEGIN { srand(); printf "%.3f", rand() * t }')
   else
-    # Fallback: integer ms → fractional seconds (resolution ~1 ms)
+    # Fallback ~1 ms resolution via $RANDOM
     local ms=0
-    if (( temp > 0 )); then
-      ms=$(( RANDOM % (temp * 1000 + 1) ))
-    fi
-    delay=$(printf "%d.%03d" $((ms / 1000)) $((ms % 1000)))
+    (( temp > 0 )) && ms=$(( RANDOM % (temp * 1000 + 1) ))
+    printf -v delay "%d.%03d" $((ms / 1000)) $((ms % 1000))
   fi
-
   echo "Full Jitter backoff ${delay}s (attempt=$attempt, temp=$temp, cap=$cap)"
   sleep "$delay"
 }
+
+# retry N CMD...  — up to N attempts; Full Jitter between failures
+retry() {
+  local tries=$1; shift
+  local n=1
+  until "$@"; do
+    if (( n >= tries )); then
+      echo "ERROR: failed after ${tries} attempt(s): $*"
+      return 1
+    fi
+    echo -n "WARN: attempt $n failed — "
+    sleep_full_jitter "$n" 1 8
+    ((n++)) || true
+  done
+}
+
+# --- example usage ---
+# retry 3 timeout 30s g++ -O3 -std=c++20 -I. verify.cpp -o verify
+# retry 2 timeout 10s ./verify
+# retry 3 timeout 180s docker build -t geblomisort -f Dockerfile .
+# retry 2 timeout 30s docker run --rm geblomisort
 ```
 
 ### 1. Host compile smoke test
 
 ```bash
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
+command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found"; exit 1; }
+command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout not found"; exit 1; }
 
-command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found in PATH"; exit 1; }
-command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
+# (define sleep_full_jitter + retry from the Implementation snippet above)
 
 cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include "GeblomiSort.hpp"
@@ -160,113 +176,38 @@ int main() {
     std::vector<int> v(1000);
     std::iota(v.rbegin(), v.rend(), 0);
     geblomi::sort(v.begin(), v.end());
-    if (!std::is_sorted(v.begin(), v.end())) {
-        std::cerr << "FAIL: ascending sort incorrect\n";
-        return 1;
-    }
+    if (!std::is_sorted(v.begin(), v.end())) { std::cerr << "FAIL: ascending\n"; return 1; }
     geblomi::sort(v.begin(), v.end(), std::greater<>{});
-    if (!std::is_sorted(v.begin(), v.end(), std::greater<>{})) {
-        std::cerr << "FAIL: descending sort incorrect\n";
-        return 2;
-    }
+    if (!std::is_sorted(v.begin(), v.end(), std::greater<>{})) { std::cerr << "FAIL: descending\n"; return 2; }
     std::cout << "HOST_OK\n";
     return 0;
 }
 EOF
 
-COMPILED=0
-for attempt in 1 2 3; do
-  if timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
-    COMPILED=1
-    break
-  fi
-  echo -n "WARN: compile attempt $attempt failed or timed out — "
-  sleep_full_jitter "$attempt" 1 8
-done
-if [ "$COMPILED" -ne 1 ]; then
-  echo "ERROR: compilation failed after 3 attempts"
-  exit 1
-fi
-
-RAN=0
-for attempt in 1 2; do
-  if timeout 10s /tmp/verify_geblomi; then
-    RAN=1
-    break
-  fi
-  echo -n "WARN: run attempt $attempt failed or timed out — "
-  sleep_full_jitter "$attempt" 1 8
-done
-if [ "$RAN" -ne 1 ]; then
-  echo "ERROR: smoke test binary failed after retries"
-  exit 1
-fi
-
+retry 3 timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi \
+  || { echo "ERROR: compilation failed after retries"; exit 1; }
+retry 2 timeout 10s /tmp/verify_geblomi \
+  || { echo "ERROR: smoke test failed after retries"; exit 1; }
 echo "Host smoke test passed."
 ```
 
-**Expected output (success):**
-```text
-HOST_OK
-Host smoke test passed.
-```
-
-**Expected on retry (illustrative):**
-```text
-WARN: compile attempt 1 failed or timed out — Full Jitter backoff 0.347s (attempt=1, temp=1, cap=8)
-WARN: compile attempt 2 failed or timed out — Full Jitter backoff 1.812s (attempt=2, temp=2, cap=8)
-HOST_OK
-Host smoke test passed.
-```
+**Expected:** `HOST_OK` then `Host smoke test passed.`
 
 ### 2. Docker image smoke test
 
 ```bash
-command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found in PATH"; exit 1; }
-command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
+command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found"; exit 1; }
 
-BUILT=0
-for attempt in 1 2 3; do
-  if timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
-    BUILT=1
-    break
-  fi
-  echo -n "WARN: docker build attempt $attempt failed or timed out — "
-  sleep_full_jitter "$attempt" 1 8
-done
-if [ "$BUILT" -ne 1 ]; then
-  echo "ERROR: docker build failed after 3 attempts"
-  exit 1
-fi
+retry 3 timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort \
+  || { echo "ERROR: docker build failed after retries"; exit 1; }
+retry 2 timeout 30s docker run --rm geblomisort \
+  || { echo "ERROR: docker run failed after retries"; exit 1; }
 
-RAN=0
-for attempt in 1 2; do
-  if timeout 30s docker run --rm geblomisort; then
-    RAN=1
-    break
-  fi
-  echo -n "WARN: docker run attempt $attempt failed or timed out — "
-  sleep_full_jitter "$attempt" 1 8
-done
-if [ "$RAN" -ne 1 ]; then
-  echo "ERROR: docker run (demo) failed after retries"
-  exit 1
-fi
-
-SIZE=$(docker images geblomisort --format '{{.Size}}' 2>/dev/null || echo "unknown")
-echo "Image size: $SIZE"
+echo "Image size: $(docker images geblomisort --format '{{.Size}}')"
 echo "Docker smoke test passed."
 ```
 
-**Expected output (success):**
-```text
-Successfully tagged geblomisort:latest
-...demo output...
-Image size: 120MB
-Docker smoke test passed.
-```
-
-Full Jitter with sub-second resolution draws each sleep uniformly from `[0.0, min(cap, base·2^(attempt-1))]`, maximizing desynchronization while remaining pure-bash / awk portable.
+**Expected:** demo runs (exit 0); image size typically ~80–150 MB.
 
 ### 3. (Optional) Package switch check
 
@@ -276,12 +217,10 @@ Full Jitter with sub-second resolution draws each sleep uniformly from `[0.0, mi
 #include <iostream>
 #include <numeric>
 #include <algorithm>
-
 int main() {
     std::vector<int> v(500);
     std::iota(v.rbegin(), v.rend(), 0);
-
-    geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
+    geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
     geblomi::sort(v.begin(), v.end());
     if (!std::is_sorted(v.begin(), v.end())) {
         std::cerr << "FAIL: ResourceAware produced unsorted output\n";
@@ -292,7 +231,7 @@ int main() {
 }
 ```
 
-Compile/run with the same timeout + Full Jitter (sub-second) pattern. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
+**Expected:** `PACKAGE_SWITCH_OK` (exit 0).
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

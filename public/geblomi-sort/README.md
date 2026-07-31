@@ -108,7 +108,7 @@ Confirm the install and Docker image work as expected. Smoke tests include:
 
 > **Note:** `timeout` is GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
 
-### Implementation snippet (copy-paste)
+### Implementation snippet — Bash
 
 ```bash
 #!/usr/bin/env bash
@@ -116,15 +116,12 @@ Confirm the install and Docker image work as expected. Smoke tests include:
 # - AWS Full Jitter (sub-second): sleep = Uniform(0, min(cap, base*2^(attempt-1)))
 # - Token-bucket retry quota (AWS Standard-style circuit breaker)
 
-# --- token bucket (retry quota) ---
-RETRY_BUCKET_CAPACITY=20   # max tokens
-RETRY_BUCKET_TOKENS=20     # current tokens
-RETRY_TOKEN_COST=5         # tokens spent per retry attempt
-RETRY_TOKEN_REFILL=2       # tokens restored on success (capped at capacity)
+RETRY_BUCKET_CAPACITY=20
+RETRY_BUCKET_TOKENS=20
+RETRY_TOKEN_COST=5
+RETRY_TOKEN_REFILL=2
 
-retry_quota_available() {
-  (( RETRY_BUCKET_TOKENS >= RETRY_TOKEN_COST ))
-}
+retry_quota_available() { (( RETRY_BUCKET_TOKENS >= RETRY_TOKEN_COST )); }
 
 retry_quota_consume() {
   RETRY_BUCKET_TOKENS=$(( RETRY_BUCKET_TOKENS - RETRY_TOKEN_COST ))
@@ -138,35 +135,26 @@ retry_quota_refill() {
   fi
 }
 
-# --- Full Jitter ---
 sleep_full_jitter() {
-  local attempt=$1
-  local base=${2:-1}
-  local cap=${3:-8}
-  local exp=$(( base * (1 << (attempt - 1)) ))
-  local temp=$exp
+  local attempt=$1 base=${2:-1} cap=${3:-8}
+  local exp=$(( base * (1 << (attempt - 1)) )) temp=$exp
   (( temp > cap )) && temp=$cap
-
   local delay
   if command -v awk >/dev/null 2>&1; then
     delay=$(awk -v t="$temp" 'BEGIN { srand(); printf "%.3f", rand() * t }')
   else
-    local ms=0
-    (( temp > 0 )) && ms=$(( RANDOM % (temp * 1000 + 1) ))
+    local ms=0; (( temp > 0 )) && ms=$(( RANDOM % (temp * 1000 + 1) ))
     printf -v delay "%d.%03d" $((ms / 1000)) $((ms % 1000))
   fi
   echo "Full Jitter backoff ${delay}s (attempt=$attempt, temp=$temp, cap=$cap)"
   sleep "$delay"
 }
 
-# retry N CMD...  — attempt limit + token bucket + Full Jitter
 retry() {
-  local tries=$1; shift
-  local n=1
+  local tries=$1; shift; local n=1
   until "$@"; do
     if (( n >= tries )); then
-      echo "ERROR: failed after ${tries} attempt(s): $*"
-      return 1
+      echo "ERROR: failed after ${tries} attempt(s): $*"; return 1
     fi
     if ! retry_quota_available; then
       echo "ERROR: retry quota exhausted (tokens=${RETRY_BUCKET_TOKENS}, cost=${RETRY_TOKEN_COST}) — circuit open"
@@ -177,36 +165,147 @@ retry() {
     sleep_full_jitter "$n" 1 8
     ((n++)) || true
   done
-  retry_quota_refill   # success path: restore a few tokens
+  retry_quota_refill
   return 0
 }
-
-# --- example usage ---
-# retry 3 timeout 30s g++ -O3 -std=c++20 -I. verify.cpp -o verify
-# retry 2 timeout 10s ./verify
-# retry 3 timeout 180s docker build -t geblomisort -f Dockerfile .
-# retry 2 timeout 30s docker run --rm geblomisort
 ```
 
-**Quota behavior**
+### Implementation snippet — Python Token Bucket
+
+Equivalent helpers in pure Python 3 (stdlib only):
+
+```python
+#!/usr/bin/env python3
+"""GeblomiSort smoke-test helpers — Full Jitter + token-bucket retry quota."""
+
+from __future__ import annotations
+
+import random
+import subprocess
+import time
+from dataclasses import dataclass, field
+from typing import Callable, Sequence
+
+
+@dataclass
+class TokenBucket:
+    """AWS Standard-style retry quota (circuit breaker)."""
+    capacity: int = 20
+    tokens: int = 20
+    cost: int = 5
+    refill: int = 2
+
+    def available(self) -> bool:
+        return self.tokens >= self.cost
+
+    def consume(self) -> None:
+        if not self.available():
+            raise RuntimeError(
+                f"retry quota exhausted (tokens={self.tokens}, cost={self.cost}) — circuit open"
+            )
+        self.tokens -= self.cost
+        print(f"retry quota: spent {self.cost}, remaining {self.tokens}/{self.capacity}")
+
+    def on_success(self) -> None:
+        self.tokens = min(self.capacity, self.tokens + self.refill)
+
+
+def sleep_full_jitter(attempt: int, base: float = 1.0, cap: float = 8.0) -> None:
+    """AWS Full Jitter: sleep ~ Uniform(0, min(cap, base * 2**(attempt-1)))."""
+    temp = min(cap, base * (2 ** (attempt - 1)))
+    delay = random.uniform(0.0, temp)
+    print(f"Full Jitter backoff {delay:.3f}s (attempt={attempt}, temp={temp}, cap={cap})")
+    time.sleep(delay)
+
+
+def retry(
+    tries: int,
+    fn: Callable[[], None],
+    *,
+    bucket: TokenBucket | None = None,
+    label: str = "command",
+) -> None:
+    """Run fn up to `tries` times with token-bucket + Full Jitter between failures."""
+    bucket = bucket or TokenBucket()
+    last_exc: BaseException | None = None
+
+    for attempt in range(1, tries + 1):
+        try:
+            fn()
+            bucket.on_success()
+            return
+        except BaseException as exc:  # noqa: BLE001 — surface any failure as retryable
+            last_exc = exc
+            if attempt >= tries:
+                break
+            if not bucket.available():
+                raise RuntimeError(
+                    f"retry quota exhausted (tokens={bucket.tokens}, cost={bucket.cost}) — circuit open"
+                ) from exc
+            bucket.consume()
+            print(f"WARN: attempt {attempt} failed ({label}): {exc} — ", end="")
+            sleep_full_jitter(attempt)
+
+    raise RuntimeError(f"failed after {tries} attempt(s): {label}") from last_exc
+
+
+def run(cmd: Sequence[str], timeout: float | None = None) -> None:
+    """Run a subprocess; raise on non-zero exit."""
+    subprocess.run(list(cmd), check=True, timeout=timeout)
+
+
+# --- example usage ---
+if __name__ == "__main__":
+    quota = TokenBucket(capacity=20, tokens=20, cost=5, refill=2)
+
+    # Host compile smoke test
+    retry(
+        3,
+        lambda: run(
+            ["g++", "-O3", "-std=c++20", "-I.", "/tmp/verify_geblomi.cpp", "-o", "/tmp/verify_geblomi"],
+            timeout=30,
+        ),
+        bucket=quota,
+        label="compile",
+    )
+    retry(2, lambda: run(["/tmp/verify_geblomi"], timeout=10), bucket=quota, label="host-run")
+    print("Host smoke test passed.")
+
+    # Docker smoke test
+    retry(
+        3,
+        lambda: run(
+            [
+                "docker", "build", "-t", "geblomisort",
+                "-f", "public/geblomi-sort/Dockerfile",
+                "public/geblomi-sort",
+            ],
+            timeout=180,
+        ),
+        bucket=quota,
+        label="docker-build",
+    )
+    retry(2, lambda: run(["docker", "run", "--rm", "geblomisort"], timeout=30), bucket=quota, label="docker-run")
+    print("Docker smoke test passed.")
+```
+
+**Quota behavior (same as Bash)**
 
 | Event | Tokens |
 |-------|--------|
 | Start | 20 / 20 |
 | Each retry | −5 |
 | Success | +2 (capped at 20) |
-| Tokens < 5 | no more retries — fail fast ("circuit open") |
+| Tokens < 5 | circuit open — fail fast |
 
-With cost=5 and capacity=20 you get at most **4 retries** across the whole script before the bucket forces a stop, even if individual `retry N` limits would allow more. That mirrors AWS Standard mode’s circuit-breaking under widespread failure.
-
-### 1. Host compile smoke test
+### 1. Host compile smoke test (Bash)
 
 ```bash
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
 command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found"; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout not found"; exit 1; }
 
-# (define helpers from the Implementation snippet above)
+# (define helpers from the Bash snippet above)
 
 cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include "GeblomiSort.hpp"
@@ -235,7 +334,7 @@ echo "Host smoke test passed."
 
 **Expected:** `HOST_OK` then `Host smoke test passed.`
 
-### 2. Docker image smoke test
+### 2. Docker image smoke test (Bash)
 
 ```bash
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found"; exit 1; }

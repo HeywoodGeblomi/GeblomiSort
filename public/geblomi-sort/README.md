@@ -97,28 +97,34 @@ The multi-stage design keeps the final runtime image small while still shipping 
 Confirm the install and Docker image work as expected. Smoke tests include:
 - Explicit error handling
 - Timeouts
-- Retry with **exponential backoff + jitter** (avoids thundering herd when many clients retry together)
+- Retry with **Full Jitter** exponential backoff (AWS-recommended; avoids thundering herd)
 
 | Step | Timeout | Retries | Backoff |
 |------|---------|--------|--------|
-| Host compile | 30s | 3 | 1s → 2s → 4s + jitter |
-| Host run | 10s | 2 | 1s → 2s + jitter |
-| Docker build | 180s | 3 | 1s → 2s → 4s + jitter |
-| Docker run | 30s | 2 | 1s → 2s + jitter |
+| Host compile | 30s | 3 | Full Jitter, base=1s, cap=8s |
+| Host run | 10s | 2 | Full Jitter, base=1s, cap=8s |
+| Docker build | 180s | 3 | Full Jitter, base=1s, cap=8s |
+| Docker run | 30s | 2 | Full Jitter, base=1s, cap=8s |
 
 > **Note:** `timeout` is provided by GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
 
-### Shared helper (exponential backoff + full jitter)
+### Shared helper — Full Jitter algorithm
 
 ```bash
-# sleep_backoff ATTEMPT
-# Full jitter: uniform random in [0, base * 2^(attempt-1)]
-sleep_backoff() {
+# Full Jitter (AWS): sleep = random_between(0, min(cap, base * 2^attempt))
+# Ref: https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+sleep_full_jitter() {
   local attempt=$1
-  local base=$(( 1 << (attempt - 1) ))   # 1, 2, 4, ...
-  local jitter=$(( RANDOM % (base + 1) ))
-  local delay=$(( base + jitter ))       # base..2*base
-  echo "backoff ${delay}s (base=${base}, jitter=${jitter})"
+  local base=${2:-1}    # base delay in seconds
+  local cap=${3:-8}     # max ceiling
+  local exp=$(( base * (1 << (attempt - 1)) ))   # base * 2^(attempt-1)
+  local temp=$exp
+  if (( temp > cap )); then temp=$cap; fi
+  local delay=0
+  if (( temp > 0 )); then
+    delay=$(( RANDOM % (temp + 1) ))   # uniform [0, temp]
+  fi
+  echo "Full Jitter backoff ${delay}s (attempt=$attempt, temp=$temp, cap=$cap)"
   sleep "$delay"
 }
 ```
@@ -162,7 +168,7 @@ for attempt in 1 2 3; do
     break
   fi
   echo -n "WARN: compile attempt $attempt failed or timed out — "
-  sleep_backoff "$attempt"
+  sleep_full_jitter "$attempt" 1 8
 done
 if [ "$COMPILED" -ne 1 ]; then
   echo "ERROR: compilation failed after 3 attempts"
@@ -176,7 +182,7 @@ for attempt in 1 2; do
     break
   fi
   echo -n "WARN: run attempt $attempt failed or timed out — "
-  sleep_backoff "$attempt"
+  sleep_full_jitter "$attempt" 1 8
 done
 if [ "$RAN" -ne 1 ]; then
   echo "ERROR: smoke test binary failed after retries"
@@ -194,8 +200,8 @@ Host smoke test passed.
 
 **Expected on retry (illustrative):**
 ```text
-WARN: compile attempt 1 failed or timed out — backoff 1s (base=1, jitter=0)
-WARN: compile attempt 2 failed or timed out — backoff 3s (base=2, jitter=1)
+WARN: compile attempt 1 failed or timed out — Full Jitter backoff 0s (attempt=1, temp=1, cap=8)
+WARN: compile attempt 2 failed or timed out — Full Jitter backoff 3s (attempt=2, temp=2, cap=8)
 HOST_OK
 Host smoke test passed.
 ```
@@ -213,7 +219,7 @@ for attempt in 1 2 3; do
     break
   fi
   echo -n "WARN: docker build attempt $attempt failed or timed out — "
-  sleep_backoff "$attempt"
+  sleep_full_jitter "$attempt" 1 8
 done
 if [ "$BUILT" -ne 1 ]; then
   echo "ERROR: docker build failed after 3 attempts"
@@ -227,7 +233,7 @@ for attempt in 1 2; do
     break
   fi
   echo -n "WARN: docker run attempt $attempt failed or timed out — "
-  sleep_backoff "$attempt"
+  sleep_full_jitter "$attempt" 1 8
 done
 if [ "$RAN" -ne 1 ]; then
   echo "ERROR: docker run (demo) failed after retries"
@@ -247,7 +253,7 @@ Image size: 120MB
 Docker smoke test passed.
 ```
 
-Jitter spreads concurrent retries so multiple clients do not hit the daemon/network in lockstep (thundering herd).
+Full Jitter draws each sleep uniformly from `[0, min(cap, base·2^(attempt-1))]`, which is the AWS-recommended strategy for minimizing correlated retries (thundering herd).
 
 ### 3. (Optional) Package switch check
 
@@ -273,7 +279,7 @@ int main() {
 }
 ```
 
-Compile/run with the same timeout + exponential-backoff + jitter pattern. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
+Compile/run with the same timeout + Full Jitter pattern. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

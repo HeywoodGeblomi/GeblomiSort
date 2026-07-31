@@ -97,7 +97,7 @@ The multi-stage design keeps the final runtime image small while still shipping 
 Confirm the install and Docker image work as expected. Smoke tests include:
 - Error handling + timeouts
 - **AWS Full Jitter** retry (sub-second)
-- **Token-bucket retry quota** (AWS Standard-style circuit-breaking)
+- **Token-bucket retry quota** with full refill logic (success + optional time-based)
 
 | Step | Timeout | Max attempts | Backoff | Quota |
 |------|---------|--------------|---------|-------|
@@ -112,27 +112,55 @@ Confirm the install and Docker image work as expected. Smoke tests include:
 
 ```bash
 #!/usr/bin/env bash
-# GeblomiSort smoke-test helpers
-# - AWS Full Jitter (sub-second): sleep = Uniform(0, min(cap, base*2^(attempt-1)))
-# - Token-bucket retry quota (AWS Standard-style circuit breaker)
+# Token-bucket retry quota with refill logic
 
 RETRY_BUCKET_CAPACITY=20
 RETRY_BUCKET_TOKENS=20
 RETRY_TOKEN_COST=5
-RETRY_TOKEN_REFILL=2
+RETRY_TOKEN_REFILL=2          # success refill amount
+RETRY_TOKEN_RATE=0            # optional continuous refill: tokens per second (0 = off)
+RETRY_BUCKET_LAST_TS=$(date +%s)
 
-retry_quota_available() { (( RETRY_BUCKET_TOKENS >= RETRY_TOKEN_COST )); }
+retry_quota_time_refill() {
+  # Continuous refill based on elapsed wall time (no-op if RATE=0)
+  if (( RETRY_TOKEN_RATE <= 0 )); then return 0; fi
+  local now elapsed gained
+  now=$(date +%s)
+  elapsed=$(( now - RETRY_BUCKET_LAST_TS ))
+  if (( elapsed <= 0 )); then return 0; fi
+  gained=$(( elapsed * RETRY_TOKEN_RATE ))
+  RETRY_BUCKET_TOKENS=$(( RETRY_BUCKET_TOKENS + gained ))
+  if (( RETRY_BUCKET_TOKENS > RETRY_BUCKET_CAPACITY )); then
+    RETRY_BUCKET_TOKENS=$RETRY_BUCKET_CAPACITY
+  fi
+  RETRY_BUCKET_LAST_TS=$now
+  echo "retry quota: time-refill +${gained} → ${RETRY_BUCKET_TOKENS}/${RETRY_BUCKET_CAPACITY}"
+}
+
+retry_quota_available() {
+  retry_quota_time_refill
+  (( RETRY_BUCKET_TOKENS >= RETRY_TOKEN_COST ))
+}
 
 retry_quota_consume() {
   RETRY_BUCKET_TOKENS=$(( RETRY_BUCKET_TOKENS - RETRY_TOKEN_COST ))
   echo "retry quota: spent ${RETRY_TOKEN_COST}, remaining ${RETRY_BUCKET_TOKENS}/${RETRY_BUCKET_CAPACITY}"
 }
 
-retry_quota_refill() {
+# Success refill: restore a fixed amount, never above capacity
+retry_quota_refill_success() {
   RETRY_BUCKET_TOKENS=$(( RETRY_BUCKET_TOKENS + RETRY_TOKEN_REFILL ))
   if (( RETRY_BUCKET_TOKENS > RETRY_BUCKET_CAPACITY )); then
     RETRY_BUCKET_TOKENS=$RETRY_BUCKET_CAPACITY
   fi
+  echo "retry quota: success-refill +${RETRY_TOKEN_REFILL} → ${RETRY_BUCKET_TOKENS}/${RETRY_BUCKET_CAPACITY}"
+}
+
+# Full refill: restore to capacity (optional recovery path)
+retry_quota_refill_full() {
+  RETRY_BUCKET_TOKENS=$RETRY_BUCKET_CAPACITY
+  RETRY_BUCKET_LAST_TS=$(date +%s)
+  echo "retry quota: full-refill → ${RETRY_BUCKET_TOKENS}/${RETRY_BUCKET_CAPACITY}"
 }
 
 sleep_full_jitter() {
@@ -165,18 +193,16 @@ retry() {
     sleep_full_jitter "$n" 1 8
     ((n++)) || true
   done
-  retry_quota_refill
+  retry_quota_refill_success
   return 0
 }
 ```
 
-### Implementation snippet — Python Token Bucket
-
-Equivalent helpers in pure Python 3 (stdlib only):
+### Implementation snippet — Python TokenBucket (full refill logic)
 
 ```python
 #!/usr/bin/env python3
-"""GeblomiSort smoke-test helpers — Full Jitter + token-bucket retry quota."""
+"""TokenBucket with success refill + optional continuous time-based refill."""
 
 from __future__ import annotations
 
@@ -189,29 +215,86 @@ from typing import Callable, Sequence
 
 @dataclass
 class TokenBucket:
-    """AWS Standard-style retry quota (circuit breaker)."""
-    capacity: int = 20
-    tokens: int = 20
-    cost: int = 5
-    refill: int = 2
+    """AWS Standard-style retry quota with explicit refill policies.
 
+    Refill modes
+    ------------
+    1. **Success refill** (`on_success`): add `refill` tokens after a successful
+       command, capped at `capacity`. Default for smoke tests.
+    2. **Full refill** (`refill_full`): restore tokens to `capacity` (manual recovery).
+    3. **Time-based continuous refill** (`tokens_per_second` > 0): tokens regenerate
+       proportionally to elapsed wall time whenever `available`/`consume`/`on_success`
+       is called. Useful for long-running CI loops; leave at 0 for short smoke tests.
+    """
+
+    capacity: int = 20
+    tokens: float = 20.0
+    cost: int = 5
+    refill: int = 2                    # success-refill amount
+    tokens_per_second: float = 0.0     # continuous refill rate (0 = disabled)
+    _last_refill_ts: float = field(default_factory=time.monotonic, repr=False)
+
+    # ----- continuous (time-based) refill -----
+    def _time_refill(self) -> None:
+        if self.tokens_per_second <= 0:
+            return
+        now = time.monotonic()
+        elapsed = now - self._last_refill_ts
+        if elapsed <= 0:
+            return
+        gained = elapsed * self.tokens_per_second
+        before = self.tokens
+        self.tokens = min(float(self.capacity), self.tokens + gained)
+        self._last_refill_ts = now
+        if self.tokens > before:
+            print(
+                f"retry quota: time-refill +{self.tokens - before:.2f} "
+                f"→ {self.tokens:.1f}/{self.capacity}"
+            )
+
+    # ----- query / spend -----
     def available(self) -> bool:
+        self._time_refill()
         return self.tokens >= self.cost
 
     def consume(self) -> None:
-        if not self.available():
+        self._time_refill()
+        if self.tokens < self.cost:
             raise RuntimeError(
-                f"retry quota exhausted (tokens={self.tokens}, cost={self.cost}) — circuit open"
+                f"retry quota exhausted (tokens={self.tokens:.1f}, cost={self.cost}) — circuit open"
             )
         self.tokens -= self.cost
-        print(f"retry quota: spent {self.cost}, remaining {self.tokens}/{self.capacity}")
+        print(f"retry quota: spent {self.cost}, remaining {self.tokens:.1f}/{self.capacity}")
 
+    # ----- refill policies -----
     def on_success(self) -> None:
-        self.tokens = min(self.capacity, self.tokens + self.refill)
+        """Partial refill after a successful command (default smoke-test policy)."""
+        self._time_refill()
+        before = self.tokens
+        self.tokens = min(float(self.capacity), self.tokens + self.refill)
+        print(
+            f"retry quota: success-refill +{self.tokens - before:.1f} "
+            f"→ {self.tokens:.1f}/{self.capacity}"
+        )
+
+    def refill_full(self) -> None:
+        """Restore the bucket to full capacity (manual recovery)."""
+        self.tokens = float(self.capacity)
+        self._last_refill_ts = time.monotonic()
+        print(f"retry quota: full-refill → {self.tokens:.1f}/{self.capacity}")
+
+    def refill_by(self, amount: float) -> None:
+        """Add an arbitrary amount of tokens, capped at capacity."""
+        self._time_refill()
+        before = self.tokens
+        self.tokens = min(float(self.capacity), self.tokens + amount)
+        print(
+            f"retry quota: refill_by +{self.tokens - before:.1f} "
+            f"→ {self.tokens:.1f}/{self.capacity}"
+        )
 
 
 def sleep_full_jitter(attempt: int, base: float = 1.0, cap: float = 8.0) -> None:
-    """AWS Full Jitter: sleep ~ Uniform(0, min(cap, base * 2**(attempt-1)))."""
     temp = min(cap, base * (2 ** (attempt - 1)))
     delay = random.uniform(0.0, temp)
     print(f"Full Jitter backoff {delay:.3f}s (attempt={attempt}, temp={temp}, cap={cap})")
@@ -225,22 +308,21 @@ def retry(
     bucket: TokenBucket | None = None,
     label: str = "command",
 ) -> None:
-    """Run fn up to `tries` times with token-bucket + Full Jitter between failures."""
     bucket = bucket or TokenBucket()
     last_exc: BaseException | None = None
 
     for attempt in range(1, tries + 1):
         try:
             fn()
-            bucket.on_success()
+            bucket.on_success()       # success-refill path
             return
-        except BaseException as exc:  # noqa: BLE001 — surface any failure as retryable
+        except BaseException as exc:  # noqa: BLE001
             last_exc = exc
             if attempt >= tries:
                 break
             if not bucket.available():
                 raise RuntimeError(
-                    f"retry quota exhausted (tokens={bucket.tokens}, cost={bucket.cost}) — circuit open"
+                    f"retry quota exhausted (tokens={bucket.tokens:.1f}, cost={bucket.cost}) — circuit open"
                 ) from exc
             bucket.consume()
             print(f"WARN: attempt {attempt} failed ({label}): {exc} — ", end="")
@@ -250,15 +332,14 @@ def retry(
 
 
 def run(cmd: Sequence[str], timeout: float | None = None) -> None:
-    """Run a subprocess; raise on non-zero exit."""
     subprocess.run(list(cmd), check=True, timeout=timeout)
 
 
 # --- example usage ---
 if __name__ == "__main__":
-    quota = TokenBucket(capacity=20, tokens=20, cost=5, refill=2)
+    # Smoke tests: success refill only (no continuous rate)
+    quota = TokenBucket(capacity=20, tokens=20, cost=5, refill=2, tokens_per_second=0.0)
 
-    # Host compile smoke test
     retry(
         3,
         lambda: run(
@@ -271,32 +352,20 @@ if __name__ == "__main__":
     retry(2, lambda: run(["/tmp/verify_geblomi"], timeout=10), bucket=quota, label="host-run")
     print("Host smoke test passed.")
 
-    # Docker smoke test
-    retry(
-        3,
-        lambda: run(
-            [
-                "docker", "build", "-t", "geblomisort",
-                "-f", "public/geblomi-sort/Dockerfile",
-                "public/geblomi-sort",
-            ],
-            timeout=180,
-        ),
-        bucket=quota,
-        label="docker-build",
-    )
-    retry(2, lambda: run(["docker", "run", "--rm", "geblomisort"], timeout=30), bucket=quota, label="docker-run")
-    print("Docker smoke test passed.")
+    # Long-running CI loop example: enable time-based refill (e.g. 1 token / 10s)
+    # long_quota = TokenBucket(capacity=20, tokens=20, cost=5, refill=2, tokens_per_second=0.1)
 ```
 
-**Quota behavior (same as Bash)**
+**Refill policies at a glance**
 
-| Event | Tokens |
-|-------|--------|
-| Start | 20 / 20 |
-| Each retry | −5 |
-| Success | +2 (capped at 20) |
-| Tokens < 5 | circuit open — fail fast |
+| Policy | Method | When | Effect |
+|--------|--------|------|--------|
+| Success | `on_success()` / `retry_quota_refill_success` | After a successful command | `tokens = min(capacity, tokens + refill)` |
+| Full | `refill_full()` / `retry_quota_refill_full` | Manual recovery | `tokens = capacity` |
+| Time-based | `tokens_per_second` / `RETRY_TOKEN_RATE` | Continuously (on each API call) | `tokens += elapsed × rate` (capped) |
+| Custom | `refill_by(amount)` | Caller-driven | `tokens = min(capacity, tokens + amount)` |
+
+Default smoke-test path uses **success refill only** (`refill=2`, `tokens_per_second=0`).
 
 ### 1. Host compile smoke test (Bash)
 
@@ -304,8 +373,6 @@ if __name__ == "__main__":
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
 command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found"; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout not found"; exit 1; }
-
-# (define helpers from the Bash snippet above)
 
 cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include "GeblomiSort.hpp"

@@ -45,7 +45,7 @@ geblomi::sort(v);
 ### 4. (Optional) Select an incentive package
 
 ```cpp
-geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
+geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
 ```
 
 Available: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
@@ -88,13 +88,59 @@ docker run --rm -v "$PWD":/work -w /work gcc:14 \
   g++ -O3 -std=c++20 -I/path/to/headers your_code.cpp -o /tmp/a && /tmp/a
 ```
 
-### One-liner without a custom image
+The multi-stage design keeps the final runtime image small while still shipping the headers.
+
+---
+
+## Verification
+
+Confirm the install and Docker image work as expected.
+
+### 1. Host compile smoke test
+
 ```bash
-docker run --rm -v "$PWD":/src -w /src gcc:14 \
-  bash -c 'g++ -O3 -std=c++20 -I. your_code.cpp -o /tmp/a && /tmp/a'
+cd public/geblomi-sort
+cat > /tmp/verify_geblomi.cpp << 'EOF'
+#include "GeblomiSort.hpp"
+#include <vector>
+#include <cassert>
+#include <numeric>
+int main() {
+    std::vector<int> v(1000);
+    std::iota(v.rbegin(), v.rend(), 0);   // reverse-sorted
+    geblomi::sort(v.begin(), v.end());
+    assert(std::is_sorted(v.begin(), v.end()));
+    // greater<>
+    geblomi::sort(v.begin(), v.end(), std::greater<>{});
+    assert(std::is_sorted(v.begin(), v.end(), std::greater<>{}));
+    return 0;
+}
+EOF
+g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi && /tmp/verify_geblomi && echo "HOST_OK"
 ```
 
-The multi-stage design keeps the final runtime image small while still shipping the headers.
+Expected: `HOST_OK` (exit code 0).
+
+### 2. Docker image smoke test
+
+```bash
+docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort
+docker run --rm geblomisort
+# Optional: confirm image is slim
+docker images geblomisort --format '{{.Repository}}:{{.Tag}}  {{.Size}}'
+```
+
+Expected: demo runs without error; image size typically ~80–150 MB.
+
+### 3. (Optional) Package switch check
+
+```cpp
+geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
+// or HypervolumeProxy, ParetoDominance, etc.
+geblomi::sort(v.begin(), v.end());  // still correct; only borderline routing may differ
+```
+
+All six packages preserve correctness on clear data (borderline-only activation).
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

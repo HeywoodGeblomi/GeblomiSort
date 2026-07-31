@@ -45,7 +45,7 @@ geblomi::sort(v);
 ### 4. (Optional) Select an incentive package
 
 ```cpp
-geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
+geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
 ```
 
 Available: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
@@ -97,11 +97,33 @@ The multi-stage design keeps the final runtime image small while still shipping 
 Confirm the install and Docker image work as expected. Smoke tests include:
 - Explicit error handling
 - Timeouts
-- **Retry with exponential backoff** (1s → 2s → 4s)
+- Retry with **exponential backoff + jitter** (avoids thundering herd when many clients retry together)
+
+| Step | Timeout | Retries | Backoff |
+|------|---------|--------|--------|
+| Host compile | 30s | 3 | 1s → 2s → 4s + jitter |
+| Host run | 10s | 2 | 1s → 2s + jitter |
+| Docker build | 180s | 3 | 1s → 2s → 4s + jitter |
+| Docker run | 30s | 2 | 1s → 2s + jitter |
 
 > **Note:** `timeout` is provided by GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
 
-### 1. Host compile smoke test (error handling + timeout + exponential backoff)
+### Shared helper (exponential backoff + full jitter)
+
+```bash
+# sleep_backoff ATTEMPT
+# Full jitter: uniform random in [0, base * 2^(attempt-1)]
+sleep_backoff() {
+  local attempt=$1
+  local base=$(( 1 << (attempt - 1) ))   # 1, 2, 4, ...
+  local jitter=$(( RANDOM % (base + 1) ))
+  local delay=$(( base + jitter ))       # base..2*base
+  echo "backoff ${delay}s (base=${base}, jitter=${jitter})"
+  sleep "$delay"
+}
+```
+
+### 1. Host compile smoke test
 
 ```bash
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
@@ -133,32 +155,28 @@ int main() {
 }
 EOF
 
-# Retry compile up to 3 times with exponential backoff (1s → 2s → 4s)
 COMPILED=0
 for attempt in 1 2 3; do
   if timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
     COMPILED=1
     break
   fi
-  DELAY=$((1 << (attempt - 1)))   # 1, 2, 4
-  echo "WARN: compile attempt $attempt failed or timed out — backoff ${DELAY}s..."
-  sleep "$DELAY"
+  echo -n "WARN: compile attempt $attempt failed or timed out — "
+  sleep_backoff "$attempt"
 done
 if [ "$COMPILED" -ne 1 ]; then
   echo "ERROR: compilation failed after 3 attempts"
   exit 1
 fi
 
-# Retry run up to 2 times with exponential backoff
 RAN=0
 for attempt in 1 2; do
   if timeout 10s /tmp/verify_geblomi; then
     RAN=1
     break
   fi
-  DELAY=$((1 << (attempt - 1)))
-  echo "WARN: run attempt $attempt failed or timed out — backoff ${DELAY}s..."
-  sleep "$DELAY"
+  echo -n "WARN: run attempt $attempt failed or timed out — "
+  sleep_backoff "$attempt"
 done
 if [ "$RAN" -ne 1 ]; then
   echo "ERROR: smoke test binary failed after retries"
@@ -168,45 +186,48 @@ fi
 echo "Host smoke test passed."
 ```
 
-**Expected output:**
+**Expected output (success):**
 ```text
 HOST_OK
 Host smoke test passed.
 ```
-(If transient failures occur you may see WARN + backoff lines, then success.)
 
-### 2. Docker image smoke test (error handling + timeout + exponential backoff)
+**Expected on retry (illustrative):**
+```text
+WARN: compile attempt 1 failed or timed out — backoff 1s (base=1, jitter=0)
+WARN: compile attempt 2 failed or timed out — backoff 3s (base=2, jitter=1)
+HOST_OK
+Host smoke test passed.
+```
+
+### 2. Docker image smoke test
 
 ```bash
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found in PATH"; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
 
-# Retry docker build up to 3 times with exponential backoff
 BUILT=0
 for attempt in 1 2 3; do
   if timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
     BUILT=1
     break
   fi
-  DELAY=$((1 << (attempt - 1)))   # 1, 2, 4
-  echo "WARN: docker build attempt $attempt failed or timed out — backoff ${DELAY}s..."
-  sleep "$DELAY"
+  echo -n "WARN: docker build attempt $attempt failed or timed out — "
+  sleep_backoff "$attempt"
 done
 if [ "$BUILT" -ne 1 ]; then
   echo "ERROR: docker build failed after 3 attempts"
   exit 1
 fi
 
-# Retry docker run up to 2 times with exponential backoff
 RAN=0
 for attempt in 1 2; do
   if timeout 30s docker run --rm geblomisort; then
     RAN=1
     break
   fi
-  DELAY=$((1 << (attempt - 1)))
-  echo "WARN: docker run attempt $attempt failed or timed out — backoff ${DELAY}s..."
-  sleep "$DELAY"
+  echo -n "WARN: docker run attempt $attempt failed or timed out — "
+  sleep_backoff "$attempt"
 done
 if [ "$RAN" -ne 1 ]; then
   echo "ERROR: docker run (demo) failed after retries"
@@ -218,14 +239,15 @@ echo "Image size: $SIZE"
 echo "Docker smoke test passed."
 ```
 
-**Expected output (illustrative):**
+**Expected output (success):**
 ```text
 Successfully tagged geblomisort:latest
 ...demo output...
 Image size: 120MB
 Docker smoke test passed.
 ```
-Typical size **~80–150 MB**. Exponential backoff absorbs transient daemon/network hiccups; final ERROR means a real failure.
+
+Jitter spreads concurrent retries so multiple clients do not hit the daemon/network in lockstep (thundering herd).
 
 ### 3. (Optional) Package switch check
 
@@ -240,7 +262,7 @@ int main() {
     std::vector<int> v(500);
     std::iota(v.rbegin(), v.rend(), 0);
 
-    geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
+    geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
     geblomi::sort(v.begin(), v.end());
     if (!std::is_sorted(v.begin(), v.end())) {
         std::cerr << "FAIL: ResourceAware produced unsorted output\n";
@@ -251,7 +273,7 @@ int main() {
 }
 ```
 
-Compile/run with the same timeout + exponential-backoff retry pattern as the host smoke test. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
+Compile/run with the same timeout + exponential-backoff + jitter pattern. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

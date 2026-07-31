@@ -1,7 +1,6 @@
 /**
  * geblomi_probe.hpp — Richer Gyro / ProbeResult for GeblomiSort
- * 80/20 enhancement: expose richer flux metrics from the adaptive probe
- * while keeping residual routing logic unchanged.
+ * 80/20 enhancement + A+E render: sparse-guard, equal-bias, hierarchical signals
  * Team: Grok + Harper + Benjamin + Lucas + Heywood | 2026-07-31
  */
 #pragma once
@@ -29,6 +28,8 @@ struct ProbeResult {
     size_t direction_changes = 0;
     size_t equal_count = 0;
     float confidence = 1.0f;
+    size_t samples = 0;
+    size_t n = 0;
 };
 
 template <typename It>
@@ -39,6 +40,7 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
     using T = typename std::iterator_traits<It>::value_type;
     const size_t n = static_cast<size_t>(end - begin);
     ProbeResult r;
+    r.n = n;
 
     if (n < 2) {
         r.route = Route::Small;
@@ -90,6 +92,20 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
         ++samples;
     }
 
+    // Sparse-inversion guard (A residual): if head clean and large n, force extra samples
+    if (all_sorted && n > 1024 && direction_changes == 0) {
+        for (size_t extra : {n/4, n/2, 3*n/4}) {
+            if (extra >= 1 && extra < n) {
+                if (comp(*(begin + extra), *(begin + (extra - 1)))) {
+                    all_sorted = false;
+                    ++inversions;
+                    ++samples;
+                    break;
+                }
+            }
+        }
+    }
+
     // Safe strided start
     size_t strided_start = std::max(head_limit, stride);
     if (strided_start < n && strided_start % stride != 0) {
@@ -120,6 +136,7 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
             r.max_run = n;
             r.direction_changes = 0;
             r.equal_count = equal_count;
+            r.samples = samples;
             r.confidence = 1.0f;
             return r;
         }
@@ -149,6 +166,7 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
             r.max_run = n;
             r.direction_changes = 0;
             r.equal_count = equal_count;
+            r.samples = samples;
             r.confidence = 1.0f;
             return r;
         }
@@ -174,13 +192,19 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
     }
     max_run = std::max(max_run, cur_run);
 
-    const double inv_ratio = samples ? static_cast<double>(inversions) / static_cast<double>(samples) : 0.5;
+    double inv_ratio = samples ? static_cast<double>(inversions) / static_cast<double>(samples) : 0.5;
     const double thr = (n < 10000) ? 0.05 : (n < 100000 ? 0.08 : 0.11);
+
+    // Equal-ratio bias for hierarchical / constant disposition (E + A)
+    if (samples > 0 && equal_count > samples / 2) {
+        inv_ratio *= 0.5; // bias toward Patterned / none-flux
+    }
 
     r.inv_ratio = inv_ratio;
     r.max_run = max_run;
     r.direction_changes = direction_changes;
     r.equal_count = equal_count;
+    r.samples = samples;
 
     if (inv_ratio < thr || max_run > n / 6) {
         r.route = Route::Patterned;
@@ -188,9 +212,10 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
         r.route = Route::Random;
     }
 
-    // confidence: higher when decision is clear
+    // confidence: higher when decision is clear or high-equal hierarchical signal
     double dist = std::abs(inv_ratio - thr);
     r.confidence = static_cast<float>(std::min(1.0, 0.4 + dist / (thr + 1e-9) * 0.6));
+    if (equal_count > samples / 2) r.confidence = std::min(1.0f, r.confidence + 0.2f);
 
     return r;
 }

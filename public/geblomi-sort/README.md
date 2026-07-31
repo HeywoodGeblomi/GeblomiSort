@@ -94,30 +94,55 @@ The multi-stage design keeps the final runtime image small while still shipping 
 
 ## Verification
 
-Confirm the install and Docker image work as expected. Smoke tests include error handling, timeouts, and **AWS Full Jitter** retry (sub-second resolution).
+Confirm the install and Docker image work as expected. Smoke tests include:
+- Error handling + timeouts
+- **AWS Full Jitter** retry (sub-second)
+- **Token-bucket retry quota** (AWS Standard-style circuit-breaking)
 
-| Step | Timeout | Retries | Backoff |
-|------|---------|--------|--------|
-| Host compile | 30s | 3 | Full Jitter, base=1s, cap=8s |
-| Host run | 10s | 2 | Full Jitter, base=1s, cap=8s |
-| Docker build | 180s | 3 | Full Jitter, base=1s, cap=8s |
-| Docker run | 30s | 2 | Full Jitter, base=1s, cap=8s |
+| Step | Timeout | Max attempts | Backoff | Quota |
+|------|---------|--------------|---------|-------|
+| Host compile | 30s | 3 | Full Jitter 1s/8s | shared bucket |
+| Host run | 10s | 2 | Full Jitter 1s/8s | shared bucket |
+| Docker build | 180s | 3 | Full Jitter 1s/8s | shared bucket |
+| Docker run | 30s | 2 | Full Jitter 1s/8s | shared bucket |
 
 > **Note:** `timeout` is GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
 
 ### Implementation snippet (copy-paste)
 
-Drop-in bash helpers for retry + sub-second Full Jitter:
-
 ```bash
 #!/usr/bin/env bash
-# GeblomiSort smoke-test helpers — AWS Full Jitter (sub-second)
-# sleep = Uniform(0, min(cap, base * 2^(attempt-1)))
+# GeblomiSort smoke-test helpers
+# - AWS Full Jitter (sub-second): sleep = Uniform(0, min(cap, base*2^(attempt-1)))
+# - Token-bucket retry quota (AWS Standard-style circuit breaker)
 
+# --- token bucket (retry quota) ---
+RETRY_BUCKET_CAPACITY=20   # max tokens
+RETRY_BUCKET_TOKENS=20     # current tokens
+RETRY_TOKEN_COST=5         # tokens spent per retry attempt
+RETRY_TOKEN_REFILL=2       # tokens restored on success (capped at capacity)
+
+retry_quota_available() {
+  (( RETRY_BUCKET_TOKENS >= RETRY_TOKEN_COST ))
+}
+
+retry_quota_consume() {
+  RETRY_BUCKET_TOKENS=$(( RETRY_BUCKET_TOKENS - RETRY_TOKEN_COST ))
+  echo "retry quota: spent ${RETRY_TOKEN_COST}, remaining ${RETRY_BUCKET_TOKENS}/${RETRY_BUCKET_CAPACITY}"
+}
+
+retry_quota_refill() {
+  RETRY_BUCKET_TOKENS=$(( RETRY_BUCKET_TOKENS + RETRY_TOKEN_REFILL ))
+  if (( RETRY_BUCKET_TOKENS > RETRY_BUCKET_CAPACITY )); then
+    RETRY_BUCKET_TOKENS=$RETRY_BUCKET_CAPACITY
+  fi
+}
+
+# --- Full Jitter ---
 sleep_full_jitter() {
   local attempt=$1
-  local base=${2:-1}    # seconds
-  local cap=${3:-8}     # seconds
+  local base=${2:-1}
+  local cap=${3:-8}
   local exp=$(( base * (1 << (attempt - 1)) ))
   local temp=$exp
   (( temp > cap )) && temp=$cap
@@ -126,7 +151,6 @@ sleep_full_jitter() {
   if command -v awk >/dev/null 2>&1; then
     delay=$(awk -v t="$temp" 'BEGIN { srand(); printf "%.3f", rand() * t }')
   else
-    # Fallback ~1 ms resolution via $RANDOM
     local ms=0
     (( temp > 0 )) && ms=$(( RANDOM % (temp * 1000 + 1) ))
     printf -v delay "%d.%03d" $((ms / 1000)) $((ms % 1000))
@@ -135,7 +159,7 @@ sleep_full_jitter() {
   sleep "$delay"
 }
 
-# retry N CMD...  — up to N attempts; Full Jitter between failures
+# retry N CMD...  — attempt limit + token bucket + Full Jitter
 retry() {
   local tries=$1; shift
   local n=1
@@ -144,10 +168,17 @@ retry() {
       echo "ERROR: failed after ${tries} attempt(s): $*"
       return 1
     fi
+    if ! retry_quota_available; then
+      echo "ERROR: retry quota exhausted (tokens=${RETRY_BUCKET_TOKENS}, cost=${RETRY_TOKEN_COST}) — circuit open"
+      return 1
+    fi
+    retry_quota_consume
     echo -n "WARN: attempt $n failed — "
     sleep_full_jitter "$n" 1 8
     ((n++)) || true
   done
+  retry_quota_refill   # success path: restore a few tokens
+  return 0
 }
 
 # --- example usage ---
@@ -157,6 +188,17 @@ retry() {
 # retry 2 timeout 30s docker run --rm geblomisort
 ```
 
+**Quota behavior**
+
+| Event | Tokens |
+|-------|--------|
+| Start | 20 / 20 |
+| Each retry | −5 |
+| Success | +2 (capped at 20) |
+| Tokens < 5 | no more retries — fail fast ("circuit open") |
+
+With cost=5 and capacity=20 you get at most **4 retries** across the whole script before the bucket forces a stop, even if individual `retry N` limits would allow more. That mirrors AWS Standard mode’s circuit-breaking under widespread failure.
+
 ### 1. Host compile smoke test
 
 ```bash
@@ -164,7 +206,7 @@ cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit
 command -v g++ >/dev/null 2>&1 || { echo "ERROR: g++ not found"; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout not found"; exit 1; }
 
-# (define sleep_full_jitter + retry from the Implementation snippet above)
+# (define helpers from the Implementation snippet above)
 
 cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include "GeblomiSort.hpp"
@@ -185,9 +227,9 @@ int main() {
 EOF
 
 retry 3 timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi \
-  || { echo "ERROR: compilation failed after retries"; exit 1; }
+  || { echo "ERROR: compilation failed after retries / quota"; exit 1; }
 retry 2 timeout 10s /tmp/verify_geblomi \
-  || { echo "ERROR: smoke test failed after retries"; exit 1; }
+  || { echo "ERROR: smoke test failed after retries / quota"; exit 1; }
 echo "Host smoke test passed."
 ```
 
@@ -199,9 +241,9 @@ echo "Host smoke test passed."
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found"; exit 1; }
 
 retry 3 timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort \
-  || { echo "ERROR: docker build failed after retries"; exit 1; }
+  || { echo "ERROR: docker build failed after retries / quota"; exit 1; }
 retry 2 timeout 30s docker run --rm geblomisort \
-  || { echo "ERROR: docker run failed after retries"; exit 1; }
+  || { echo "ERROR: docker run failed after retries / quota"; exit 1; }
 
 echo "Image size: $(docker images geblomisort --format '{{.Size}}')"
 echo "Docker smoke test passed."

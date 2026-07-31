@@ -26,80 +26,99 @@ Required files (this directory):
 ### 2. Add to your include path
 
 ```bash
-# Example: compile with the package directory on the include path
 g++ -O3 -std=c++20 -I path/to/public/geblomi-sort your_code.cpp -o your_binary
 ```
 
-Or simply copy both headers next to your source and `#include "GeblomiSort.hpp"`.
+Or copy both headers next to your source and `#include "GeblomiSort.hpp"`.
 
 ### 3. Use it
 
 ```cpp
-#include "GeblomiSort.hpp"   // automatically pulls geblomi_decision.hpp
+#include "GeblomiSort.hpp"
 
 std::vector<int> v = /* ... */;
-geblomi::sort(v.begin(), v.end());                    // default less<>
-geblomi::sort(v.begin(), v.end(), std::greater<>{});  // custom comparator
-geblomi::sort(v);                                     // container overload
+geblomi::sort(v.begin(), v.end());
+geblomi::sort(v.begin(), v.end(), std::greater<>{});
+geblomi::sort(v);
 ```
 
 ### 4. (Optional) Select an incentive package
 
 ```cpp
-// Runtime
-geblomi::g_active_package = geblomi::IncentivePackage::ResourceAware;
-
-// Or compile-time default
-// g++ ... -DGEBLMI_DEFAULT_PACKAGE=geblomi::IncentivePackage::HypervolumeProxy
+geblomi::current_package() = geblomi::IncentivePackage::ResourceAware;
 ```
 
-Available packages: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
+Available: `ScalarizedPreference` (default), `ParetoDominance`, `ConfidenceWeighted`, `Lexicographic`, `ResourceAware`, `HypervolumeProxy`.
 
 ### Requirements
-- C++20 compiler (`std::concepts`, random-access iterators)
-- Tested with g++ 13+ / clang 15+
+- C++20 (`std::concepts`, random-access iterators)
+- g++ 13+ / clang 15+
 
 ### Quick demo
-
 ```bash
 g++ -O3 -std=c++20 -I. examples/demo.cpp -o demo && ./demo
 ```
 
-See also [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
+---
+
+## Docker Setup
+
+An **optimized multi-stage Dockerfile** is included in this directory.
+
+- **Builder stage**: `gcc:14` (compiles the demo with static-libstdc++)
+- **Runtime stage**: `debian:bookworm-slim` (only the binary + headers → significantly smaller final image)
+
+### Build the image
+```bash
+# From repository root
+docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort
+
+# Or from this directory
+docker build -t geblomisort .
+```
+
+### Run the built-in demo
+```bash
+docker run --rm geblomisort
+```
+
+### Compile your own code (use a full gcc image)
+```bash
+docker run --rm -v "$PWD":/work -w /work gcc:14 \
+  g++ -O3 -std=c++20 -I/path/to/headers your_code.cpp -o /tmp/a && /tmp/a
+```
+
+### One-liner without a custom image
+```bash
+docker run --rm -v "$PWD":/src -w /src gcc:14 \
+  bash -c 'g++ -O3 -std=c++20 -I. your_code.cpp -o /tmp/a && /tmp/a'
+```
+
+The multi-stage design keeps the final runtime image small while still shipping the headers.
+
+See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 
 ---
 
 ## Overview
 
-GeblomiSort is an adaptive hybrid sorter that combines:
-
-- Low-overhead adaptive probing
-- Verge-style run detection and reversal for patterned / nearly-sorted data
-- Intelligent routing to **pdqsort** and **ska_sort**
-- **AmalgaSort decision layer**: Non-dominated multi-objective selection + incentive packages. Default = **ScalarizedPreference**. Activation is **borderline-only** (zero regression on clear high-ROI paths).
+GeblomiSort is an adaptive hybrid sorter combining low-overhead probing, Verge-style runs, pdqsort / ska_sort routing, and the AmalgaSort non-dominated decision layer (6 incentive packages). Default = ScalarizedPreference. Activation is borderline-only → zero regression on high-ROI paths.
 
 ### Key Features
-
-- O(1) extra memory even on adversarial inputs
-- Full custom comparator support
-- Early exits for sorted / reverse data
-- Matches Ska Sort on pure random integers
-- Strong on patterned / nearly-sorted data
+- O(1) extra memory
+- Full custom comparators
+- Early exits for sorted / reverse
+- Ska-caliber on random integers
 - Header-only, C++20
-- Runtime / compile-time package selection + activation counters
+- Runtime package selection + counters
 
 ## Performance Notes
-
-- Clear high-ROI paths (random / sorted / reverse) are identical in speed and space to prior versions by design.
-- Non-dom layer activates only on borderline probe results.
-- Strict O(1) auxiliary memory.
+Clear high-ROI paths are identical in speed and space to prior versions by design. Decision layer activates only on borderline probe results.
 
 ## Credits & Licenses
-
 1. **pdqsort** — Orson Peters (zlib-style)
-2. **ska_sort** — Malte Skarupke (Boost Software License 1.0)
-3. **Geblomi hybrid + AmalgaSort decision layer** — Grok + Harper + Benjamin + Lucas + Heywood (MIT)
+2. **ska_sort** — Malte Skarupke (Boost 1.0)
+3. **Geblomi + AmalgaSort** — Grok + Harper + Benjamin + Lucas + Heywood (MIT)
 
 ## Author
-
 [@HeywoodGeblomi](https://x.com/HeywoodGeblomi)

@@ -94,9 +94,14 @@ The multi-stage design keeps the final runtime image small while still shipping 
 
 ## Verification
 
-Confirm the install and Docker image work as expected. All smoke tests include **error handling**, **timeouts**, and **retry logic** (2–3 attempts) for transient failures.
+Confirm the install and Docker image work as expected. Smoke tests include:
+- Explicit error handling
+- Timeouts
+- **Retry with exponential backoff** (1s → 2s → 4s)
 
-### 1. Host compile smoke test (error handling + timeout + retry)
+> **Note:** `timeout` is provided by GNU coreutils (Linux). On macOS install `coreutils` or use `gtimeout`.
+
+### 1. Host compile smoke test (error handling + timeout + exponential backoff)
 
 ```bash
 cd public/geblomi-sort || { echo "ERROR: cannot cd to public/geblomi-sort"; exit 1; }
@@ -112,7 +117,7 @@ cat > /tmp/verify_geblomi.cpp << 'EOF'
 #include <algorithm>
 int main() {
     std::vector<int> v(1000);
-    std::iota(v.rbegin(), v.rend(), 0);   // reverse-sorted
+    std::iota(v.rbegin(), v.rend(), 0);
     geblomi::sort(v.begin(), v.end());
     if (!std::is_sorted(v.begin(), v.end())) {
         std::cerr << "FAIL: ascending sort incorrect\n";
@@ -128,33 +133,35 @@ int main() {
 }
 EOF
 
-# Retry compile up to 3 times
-COMPILE_OK=0
+# Retry compile up to 3 times with exponential backoff (1s → 2s → 4s)
+COMPILED=0
 for attempt in 1 2 3; do
   if timeout 30s g++ -O3 -std=c++20 -I. /tmp/verify_geblomi.cpp -o /tmp/verify_geblomi; then
-    COMPILE_OK=1
+    COMPILED=1
     break
   fi
-  echo "WARN: compile attempt $attempt failed or timed out; retrying..."
-  sleep 2
+  DELAY=$((1 << (attempt - 1)))   # 1, 2, 4
+  echo "WARN: compile attempt $attempt failed or timed out — backoff ${DELAY}s..."
+  sleep "$DELAY"
 done
-if [ "$COMPILE_OK" -ne 1 ]; then
+if [ "$COMPILED" -ne 1 ]; then
   echo "ERROR: compilation failed after 3 attempts"
   exit 1
 fi
 
-# Retry run up to 3 times
-RUN_OK=0
-for attempt in 1 2 3; do
+# Retry run up to 2 times with exponential backoff
+RAN=0
+for attempt in 1 2; do
   if timeout 10s /tmp/verify_geblomi; then
-    RUN_OK=1
+    RAN=1
     break
   fi
-  echo "WARN: run attempt $attempt failed or timed out; retrying..."
-  sleep 1
+  DELAY=$((1 << (attempt - 1)))
+  echo "WARN: run attempt $attempt failed or timed out — backoff ${DELAY}s..."
+  sleep "$DELAY"
 done
-if [ "$RUN_OK" -ne 1 ]; then
-  echo "ERROR: smoke test binary failed after 3 attempts"
+if [ "$RAN" -ne 1 ]; then
+  echo "ERROR: smoke test binary failed after retries"
   exit 1
 fi
 
@@ -166,41 +173,43 @@ echo "Host smoke test passed."
 HOST_OK
 Host smoke test passed.
 ```
-Any final ERROR or non-zero exit indicates a real problem (retries exhausted).
+(If transient failures occur you may see WARN + backoff lines, then success.)
 
-### 2. Docker image smoke test (error handling + timeout + retry)
+### 2. Docker image smoke test (error handling + timeout + exponential backoff)
 
 ```bash
 command -v docker >/dev/null 2>&1 || { echo "ERROR: docker not found in PATH"; exit 1; }
 command -v timeout >/dev/null 2>&1 || { echo "ERROR: timeout command not found"; exit 1; }
 
-# Retry docker build up to 3 times
-BUILD_OK=0
+# Retry docker build up to 3 times with exponential backoff
+BUILT=0
 for attempt in 1 2 3; do
   if timeout 180s docker build -t geblomisort -f public/geblomi-sort/Dockerfile public/geblomi-sort; then
-    BUILD_OK=1
+    BUILT=1
     break
   fi
-  echo "WARN: docker build attempt $attempt failed or timed out; retrying..."
-  sleep 5
+  DELAY=$((1 << (attempt - 1)))   # 1, 2, 4
+  echo "WARN: docker build attempt $attempt failed or timed out — backoff ${DELAY}s..."
+  sleep "$DELAY"
 done
-if [ "$BUILD_OK" -ne 1 ]; then
+if [ "$BUILT" -ne 1 ]; then
   echo "ERROR: docker build failed after 3 attempts"
   exit 1
 fi
 
-# Retry docker run up to 3 times
-RUN_OK=0
-for attempt in 1 2 3; do
+# Retry docker run up to 2 times with exponential backoff
+RAN=0
+for attempt in 1 2; do
   if timeout 30s docker run --rm geblomisort; then
-    RUN_OK=1
+    RAN=1
     break
   fi
-  echo "WARN: docker run attempt $attempt failed or timed out; retrying..."
-  sleep 2
+  DELAY=$((1 << (attempt - 1)))
+  echo "WARN: docker run attempt $attempt failed or timed out — backoff ${DELAY}s..."
+  sleep "$DELAY"
 done
-if [ "$RUN_OK" -ne 1 ]; then
-  echo "ERROR: docker run (demo) failed after 3 attempts"
+if [ "$RAN" -ne 1 ]; then
+  echo "ERROR: docker run (demo) failed after retries"
   exit 1
 fi
 
@@ -216,7 +225,7 @@ Successfully tagged geblomisort:latest
 Image size: 120MB
 Docker smoke test passed.
 ```
-Typical size **~80–150 MB**. Retries absorb transient daemon/network hiccups; final ERROR means a real failure.
+Typical size **~80–150 MB**. Exponential backoff absorbs transient daemon/network hiccups; final ERROR means a real failure.
 
 ### 3. (Optional) Package switch check
 
@@ -242,7 +251,7 @@ int main() {
 }
 ```
 
-Compile/run with the same timeout + retry pattern as the host smoke test. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
+Compile/run with the same timeout + exponential-backoff retry pattern as the host smoke test. **Expected:** `PACKAGE_SWITCH_OK` and exit code 0.
 
 See [`RELEASE_NOTES_v2.6.2.md`](../../RELEASE_NOTES_v2.6.2.md) for the full package menu and speed/space comparison.
 

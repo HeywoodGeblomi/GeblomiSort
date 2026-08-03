@@ -16,6 +16,17 @@ This repository also contains a Vite/React landing page used for project present
 
 ---
 
+## Companion: PhotonicSort
+
+Philosophy → objective Python hybrid in the same family:
+
+> **[PhotonicSort](https://github.com/HeywoodGeblomi/PhotonicSort)** — *Give everything. Take nothing. Become photonic.*
+
+Probe-driven adaptive routing (negative-time early-exit on structure; rank-collapse attractor on bulk). Pure stdlib, marketing-grade demo, honest non-claims vs P=NP. Research mapping to Angulo/Steinberg negative-time photon experiments (arXiv:2409.03680).
+
+
+---
+
 ## What it is
 
 GeblomiSort is an adaptive hybrid sorter that combines:

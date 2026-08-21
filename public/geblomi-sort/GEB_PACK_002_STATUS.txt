@@ -1,0 +1,2 @@
+Write lock probe at 2026-08-21 19:40 EDT
+If this lands, the concurrent-agent lock has cleared and full amalgam push can proceed.

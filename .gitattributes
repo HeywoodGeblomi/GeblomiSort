@@ -1,0 +1,26 @@
+# GEB-LANG-001 — GitHub Linguist face fix
+# Product is the C++20 header; Vite/React landing page is presentation only.
+
+# Force C++ classification for the product headers and sources
+*.hpp linguist-language=C++
+*.h linguist-language=C++
+*.cpp linguist-language=C++
+
+# Vendor / exclude the web scaffold and tooling from language stats
+src/** linguist-vendored
+package-lock.json linguist-generated
+package.json linguist-generated
+vite.config.ts linguist-vendored
+tsconfig.json linguist-vendored
+eslint.config.mjs linguist-vendored
+.vercel/** linguist-vendored
+scripts/** linguist-vendored
+migrations/** linguist-vendored
+
+# Documentation / agent scaffolding (not product code)
+.grok/** linguist-documentation
+AGENTS.md linguist-documentation
+AGENTS.project.md linguist-documentation
+
+# Optional: keep .mjs tooling out of detectable stats
+*.mjs linguist-detectable=false

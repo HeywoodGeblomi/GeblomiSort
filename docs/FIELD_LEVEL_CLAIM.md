@@ -1,18 +1,15 @@
-# GeblomiSort — Charged Surface (GEB-ACE-002 B+)
+# GeblomiSort — Charged Surface (GEB-ACE-002 B+ / A)
 
-**Status:** B+ candidate — locked cells only. Unstable cells removed, not retuned.
-**Header:** `public/geblomi-sort/GeblomiSort.hpp` (amalgam; geblomi::sort body unchanged — H0).
-**Harness:** `tests/bench.cpp` — N=1e6, seed=42, sawtooth_mod=64, 3 trials, best-of-3+warmup, `g++ -O2`.
-**Reproduce:** Action `ace` / `./bench`.
+**Status:** B+ on main; Phase A candidate.
+**Header:** `public/geblomi-sort/GeblomiSort.hpp` (H0 — body unchanged).
+**Harness:** `tests/bench.cpp` (int), `tests/bench_i64.cpp` (int64) — N=1e6, seed=42, 3 trials.
+**CI:** Action run [32541185749](https://github.com/HeywoodGeblomi/GeblomiSort/actions/runs/32541185749) — all green.
 
 ## Verdict rules
 
 win = ≥1.20× faster; loss = ≥1.20× slower; else tie.
 
-## Locked table
-
-Cells below agreed on **authoring host** and **CI ubuntu-latest** (ACE-001 run 32539582721).
-In-process 3-trial stability on authoring: YES for all remaining cells.
+## Locked table — int (B+)
 
 | dist | vs pdq | vs ska |
 |------|--------|--------|
@@ -20,26 +17,36 @@ In-process 3-trial stability on authoring: YES for all remaining cells.
 | sorted | **win** | **win** |
 | reverse | **win** | **win** |
 | patterned | tie | **loss** |
-| sawtooth | tie | *(dropped — UNSTABLE)* |
+| sawtooth | tie | *(UNSTABLE — dropped)* |
 
-**soft@1.20 losses vs pdq (locked dists): 0 / 4** (sawtooth still tie vs pdq on both hosts; counted in soft@pdq scan as non-loss).
+## Locked table — int64 (Phase A)
 
-Absolute milliseconds are host-dependent and are **not** locked language.
+Only cells where **CI O2 and CI O3 agree** (3-trial stable). Authoring-only wins that flip on CI are not locked.
 
-## Appendix — flip history (not locked)
+| dist | vs pdq | vs ska |
+|------|--------|--------|
+| random | *(UNSTABLE O2 win / O3 tie)* | tie |
+| sorted | **win** | **win** |
+| reverse | **win** | **win** |
+| patterned | tie | *(UNSTABLE O2 loss / O3 tie)* |
+| sawtooth | tie | *(UNSTABLE O2 tie / O3 win)* |
 
-| cell | authoring (ACE-001) | CI ubuntu (run 32539582721) | disposition |
-|------|---------------------|------------------------------|-------------|
-| **sawtooth vs ska** | win (geblomi 4.3 / ska 9.5) | **loss** (geblomi 5.01 / ska 3.88) | **UNSTABLE** — removed from locked table. Not retuned. |
+## Appendix — UNSTABLE history
 
-No probe-threshold change was made to chase ska on sawtooth (ticket non-goal).
+| cell | evidence | disposition |
+|------|----------|-------------|
+| int sawtooth vs ska | authoring win; CI loss | dropped (B+) |
+| int64 random vs pdq | CI O2 **win**, CI O3 **tie** | dropped |
+| int64 patterned vs ska | CI O2 **loss**, CI O3 **tie** | dropped |
+| int64 sawtooth vs ska | authoring **win**; CI O2 **tie**, CI O3 **win** | dropped |
+
+No probe retune. H0 held. A++ off.
 
 ## What this does **not** claim
 
 - Not “beats pdq everywhere.”
-- Not “beats ska on sawtooth” (cell is UNSTABLE).
-- Not multi-type / multi-arch Field-Level.
+- Not multi-arch Field-Level.
 - Not photonic hardware.
-- Correctness gated by `tests/correctness.cpp`, not this table.
+- Correctness gated by `tests/correctness.cpp` (incl. N=1e6).
 
 See `NON_CLAIMS.md`.

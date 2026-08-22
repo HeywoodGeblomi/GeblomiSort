@@ -20,21 +20,21 @@ g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
 
 CI: `.github/workflows/ace.yml`.
 
-## Charged surface (authoring host, g++ -O2, N=1e6)
+## Charged surface
 
-See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
+Locked write-up: [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
 
-| dist | geblomi | vs pdq | vs ska |
-|------|--------:|--------|--------|
-| random | 17.4 ms | win | tie |
-| sorted | 0.30 ms | win | win |
-| reverse | 0.68 ms | win | win |
-| patterned | 32.2 ms | tie | **loss** |
-| sawtooth | 4.3 ms | tie | win |
+soft@1.20 losses vs pdq: **0 / 5** on both authoring host and CI.
 
-soft@1.20 losses vs pdq: **0 / 5**. Patterned loss vs ska is reported, not hidden.
+| dist | vs pdq | vs ska (authoring) | vs ska (CI ubuntu) |
+|------|--------|--------------------|--------------------|
+| random | win | tie | tie |
+| sorted | win | win | win |
+| reverse | win | win | win |
+| patterned | tie | **loss** | **loss** |
+| sawtooth | tie | win | **loss** (flip) |
 
-CI prints its own milliseconds; cell verdicts are the locked language. Absolute times are host-dependent.
+Milliseconds are host-dependent. Cell *verdicts* are the surface. Sawtooth vs ska flipped on ubuntu-latest — documented, not hidden.
 
 ## Usage
 

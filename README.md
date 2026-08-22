@@ -11,19 +11,22 @@ The Vite/React tree is presentation only.
 ## Reproduce
 
 ```bash
-# Phase A — correctness (oracle = std::sort)
+# Correctness (oracle = std::sort; includes N=1e6)
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness && ./correctness
 
-# Phase B+ — pinned charged bench N=1e6, 3 trials
+# Charged bench int / int64, N=1e6, 3 trials
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
+g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench_i64.cpp -o bench_i64 && ./bench_i64
 ```
 
-CI: `.github/workflows/ace.yml`.
+CI: `.github/workflows/ace.yml` (matrix int/int64 × O2/O3).
 
-## Locked charged surface (B+)
+## Locked charged surface
 
-See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
-Only cells that agree authoring ↔ CI are listed.
+See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.  
+Only cells that agree across the required hosts/opts are listed.
+
+### int (B+)
 
 | dist | vs pdq | vs ska |
 |------|--------|--------|
@@ -33,8 +36,18 @@ Only cells that agree authoring ↔ CI are listed.
 | patterned | tie | **loss** |
 | sawtooth | tie | *(UNSTABLE — dropped)* |
 
-soft@1.20 losses vs pdq on locked cells: **0**.
-Flip history (sawtooth vs ska host disagreement) lives in the claim appendix — not retuned.
+### int64 (A−)
+
+O2 and O3 on CI must agree. Thin surface — two stable dists.
+
+| dist | vs pdq | vs ska |
+|------|--------|--------|
+| sorted | win | win |
+| reverse | win | win |
+| random / patterned / sawtooth | *(UNSTABLE — dropped)* | *(partially unstable — see claim)* |
+
+soft@1.20 losses vs pdq on locked cells: **0**.  
+Flip history lives in the claim appendix — not retuned. Grade **A−** (second type + two opt-levels; not A++).
 
 ## Usage
 
@@ -61,6 +74,7 @@ See [`NON_CLAIMS.md`](./NON_CLAIMS.md).
 - Not “beats pdq everywhere.”
 - Not photonic hardware.
 - `promote_ready=false` for any universal-win sentence.
+- A++ not claimed.
 
 ## Credits
 

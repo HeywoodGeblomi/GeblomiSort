@@ -1,4 +1,4 @@
-// GEB-ACE-001 Phase A — Correctness harness
+// GEB-ACE-001 Phase A — Correctness harness (+ ACE-002 N=1e6 extension)
 // Oracle: std::sort with same comparator. Assert sorted + permutation of input.
 // Build: g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness && ./correctness
 // Exit 0 on every fixture class × comparator × size.
@@ -53,7 +53,6 @@ void check_one(const char* name, std::vector<T> input, Comp comp) {
     }
 }
 
-// ---------- fixtures (ints) ----------
 std::vector<int> fix_empty() { return {}; }
 std::vector<int> fix_one() { return {42}; }
 std::vector<int> fix_sorted(size_t n) {
@@ -167,14 +166,24 @@ void run_pair_suite() {
     }
 }
 
+// GEB-ACE-002 Phase A: N=1e6 for random/sorted/reverse only (one compile).
+void run_large_n_suite() {
+    constexpr size_t n = 1'000'000;
+    auto less = std::less<int>{};
+    check_one("large/sorted/n=1000000", fix_sorted(n), less);
+    check_one("large/reverse/n=1000000", fix_reverse(n), less);
+    check_one("large/random/n=1000000", fix_random(n, 42u), less);
+}
+
 }  // namespace
 
 int main() {
-    std::cout << "GEB-ACE-001 Phase A correctness harness\n";
+    std::cout << "GEB-ACE-001/002 correctness harness\n";
 
     run_int_suite("less", std::less<int>{});
     run_int_suite("greater", std::greater<int>{});
     run_pair_suite();
+    run_large_n_suite();
 
     std::cout << "cases=" << g_cases << " failures=" << g_failures << "\n";
     if (g_failures == 0) {

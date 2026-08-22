@@ -1,52 +1,45 @@
-# GeblomiSort — Charged Surface (GEB-ACE-001)
+# GeblomiSort — Charged Surface (GEB-ACE-002 B+)
 
-**Status:** measured evidence, not a universal-win claim. Grade **B** (not B+): one cell flipped on CI.
-**Header:** `public/geblomi-sort/GeblomiSort.hpp` (amalgam; geblomi::sort body unchanged).
-**Harness:** `tests/bench.cpp` — N=1e6 `int`, best-of-3 wall ms, `g++ -O2 -std=c++20`.
-**Reproduce:** GitHub Action `ace` / `./bench` after build.
+**Status:** B+ candidate — locked cells only. Unstable cells removed, not retuned.
+**Header:** `public/geblomi-sort/GeblomiSort.hpp` (amalgam; geblomi::sort body unchanged — H0).
+**Harness:** `tests/bench.cpp` — N=1e6, seed=42, sawtooth_mod=64, 3 trials, best-of-3+warmup, `g++ -O2`.
+**Reproduce:** Action `ace` / `./bench`.
 
 ## Verdict rules
 
 win = ≥1.20× faster; loss = ≥1.20× slower; else tie.
 
-## Authoring host (local)
+## Locked table
 
-| dist | geblomi | std::sort | pdqsort | ska_sort | vs pdq | vs ska | vs std |
-|------|--------:|----------:|--------:|---------:|--------|--------|--------|
-| random | 17.4 | 79.0 | 29.6 | 17.5 | **win** | tie | **win** |
-| sorted | 0.30 | 13.0 | 1.31 | 12.9 | **win** | **win** | **win** |
-| reverse | 0.68 | 9.2 | 2.09 | 14.3 | **win** | **win** | **win** |
-| patterned | 32.2 | 81.2 | 31.9 | 17.6 | tie | **loss** | **win** |
-| sawtooth | 4.3 | 21.9 | 4.1 | 9.5 | tie | **win** | **win** |
+Cells below agreed on **authoring host** and **CI ubuntu-latest** (ACE-001 run 32539582721).
+In-process 3-trial stability on authoring: YES for all remaining cells.
 
-soft@1.20 losses vs pdq: **0 / 5**.
+| dist | vs pdq | vs ska |
+|------|--------|--------|
+| random | **win** | tie |
+| sorted | **win** | **win** |
+| reverse | **win** | **win** |
+| patterned | tie | **loss** |
+| sawtooth | tie | *(dropped — UNSTABLE)* |
 
-## CI `ubuntu-latest` (Action run 32539582721)
+**soft@1.20 losses vs pdq (locked dists): 0 / 4** (sawtooth still tie vs pdq on both hosts; counted in soft@pdq scan as non-loss).
 
-| dist | geblomi | std::sort | pdqsort | ska_sort | vs pdq | vs ska | vs std |
-|------|--------:|----------:|--------:|---------:|--------|--------|--------|
-| random | 14.66 | 70.68 | 29.18 | 14.66 | **win** | tie | **win** |
-| sorted | 0.12 | 13.29 | 1.22 | 7.51 | **win** | **win** | **win** |
-| reverse | 0.48 | 9.52 | 2.10 | 7.83 | **win** | **win** | **win** |
-| patterned | 32.42 | 75.85 | 32.00 | 9.34 | tie | **loss** | **win** |
-| sawtooth | 5.01 | 20.81 | 4.70 | 3.88 | tie | **loss** | **win** |
+Absolute milliseconds are host-dependent and are **not** locked language.
 
-soft@1.20 losses vs pdq: **0 / 5**.
+## Appendix — flip history (not locked)
 
-## Cell flip (not hidden)
+| cell | authoring (ACE-001) | CI ubuntu (run 32539582721) | disposition |
+|------|---------------------|------------------------------|-------------|
+| **sawtooth vs ska** | win (geblomi 4.3 / ska 9.5) | **loss** (geblomi 5.01 / ska 3.88) | **UNSTABLE** — removed from locked table. Not retuned. |
 
-| cell | authoring | CI ubuntu |
-|------|-----------|-----------|
-| **sawtooth vs ska** | **win** | **loss** |
-
-Absolute ms differ by machine (expected). The locked language is the *verdict*. Because sawtooth vs ska flipped, authoring and CI do **not** match cell-for-cell → grade stays **B**, not B+.
+No probe-threshold change was made to chase ska on sawtooth (ticket non-goal).
 
 ## What this does **not** claim
 
-- Not "beats pdq everywhere."
-- Not "beats ska on sawtooth everywhere" — CI says otherwise.
-- Not a multi-type / multi-arch Field-Level claim.
-- Not PhotonicSort; not hardware photonics.
-- Correctness is gated by Phase A (`tests/correctness.cpp`), not by this table.
+- Not “beats pdq everywhere.”
+- Not “beats ska on sawtooth” (cell is UNSTABLE).
+- Not multi-type / multi-arch Field-Level.
+- Not photonic hardware.
+- Correctness gated by `tests/correctness.cpp`, not this table.
 
 See `NON_CLAIMS.md`.

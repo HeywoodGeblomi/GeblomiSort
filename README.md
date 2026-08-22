@@ -14,27 +14,27 @@ The Vite/React tree is presentation only.
 # Phase A — correctness (oracle = std::sort)
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness && ./correctness
 
-# Phase B — charged bench N=1e6 best-of-3
+# Phase B+ — pinned charged bench N=1e6, 3 trials
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
 ```
 
 CI: `.github/workflows/ace.yml`.
 
-## Charged surface
+## Locked charged surface (B+)
 
-Locked write-up: [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
+See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
+Only cells that agree authoring ↔ CI are listed.
 
-soft@1.20 losses vs pdq: **0 / 5** on both authoring host and CI.
+| dist | vs pdq | vs ska |
+|------|--------|--------|
+| random | win | tie |
+| sorted | win | win |
+| reverse | win | win |
+| patterned | tie | **loss** |
+| sawtooth | tie | *(UNSTABLE — dropped)* |
 
-| dist | vs pdq | vs ska (authoring) | vs ska (CI ubuntu) |
-|------|--------|--------------------|--------------------|
-| random | win | tie | tie |
-| sorted | win | win | win |
-| reverse | win | win | win |
-| patterned | tie | **loss** | **loss** |
-| sawtooth | tie | win | **loss** (flip) |
-
-Milliseconds are host-dependent. Cell *verdicts* are the surface. Sawtooth vs ska flipped on ubuntu-latest — documented, not hidden.
+soft@1.20 losses vs pdq on locked cells: **0**.
+Flip history (sawtooth vs ska host disagreement) lives in the claim appendix — not retuned.
 
 ## Usage
 

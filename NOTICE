@@ -1,0 +1,23 @@
+NOTICE — Third-party components
+================================
+
+This distribution includes third-party components that retain their original
+licenses. The dual AGPL + Commercial model applies only to original GeblomiSort
+work (Copyright (c) 2026 Heywood Geblomi). It does not re-license the following:
+
+1. pdqsort by Orson Peters (2021)
+   - Copyright (c) 2021 Orson Peters
+   - License: zlib-style
+   - Full notice is embedded in GeblomiSort.hpp / residual baselines
+   - Permission is granted to use, alter, and redistribute subject to the three
+     restrictions listed in that notice (do not misrepresent origin, mark
+     alterations, keep the notice).
+
+2. ska_sort by Malte Skarupke (2016)
+   - Copyright Malte Skarupke 2016
+   - Distributed under the Boost Software License, Version 1.0
+   - See http://www.boost.org/LICENSE_1_0.txt
+   - Full notice is embedded in GeblomiSort.hpp / residual baselines
+
+You must retain the original copyright notices and license texts for the
+included components when redistributing source form.

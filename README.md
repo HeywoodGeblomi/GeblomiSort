@@ -76,6 +76,17 @@ See [`NON_CLAIMS.md`](./NON_CLAIMS.md).
 - `promote_ready=false` for any universal-win sentence.
 - A++ not claimed.
 
+## License
+
+**Dual licensed.**
+
+- Non-commercial / research / evaluation / non-production → **AGPLv3** (see [LICENSE](LICENSE) and [LICENSE-AGPL](LICENSE-AGPL))
+- Any commercial use, production deployment, embedding, SaaS, or redistribution as product → **requires a commercial license** from the copyright holder (see [LICENSE-COMMERCIAL](LICENSE-COMMERCIAL) and [COMMERCIAL.md](COMMERCIAL.md)).
+
+Copyright (c) 2026 Heywood Geblomi.
+
+Third-party components (pdqsort, ska_sort) retain their original licenses — see [NOTICE](NOTICE).
+
 ## Credits
 
 - pdqsort — Orson Peters

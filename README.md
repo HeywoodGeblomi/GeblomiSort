@@ -6,7 +6,7 @@ C++20 header-only adaptive hybrid 1-D sort: probe → early-exit / Verge-style /
 
 **Product file:** [`public/geblomi-sort/GeblomiSort.hpp`](./public/geblomi-sort/GeblomiSort.hpp) — one-file drop-in.
 
-This repository is the header, tests, and CI. Ignore any leftover agent/app-builder files; they are not the product.
+This repository is the header, tests, and CI.
 
 ## Reproduce
 

@@ -6,7 +6,7 @@ C++20 header-only adaptive hybrid 1-D sort: probe → early-exit / Verge-style /
 
 **Product file:** [`public/geblomi-sort/GeblomiSort.hpp`](./public/geblomi-sort/GeblomiSort.hpp) — one-file drop-in.
 
-The Vite/React tree is presentation only.
+This repository is the header, tests, and CI. Ignore any leftover agent/app-builder files; they are not the product.
 
 ## Reproduce
 
@@ -23,7 +23,7 @@ CI: `.github/workflows/ace.yml` (matrix int/int64 × O2/O3).
 
 ## Locked charged surface
 
-See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.  
+See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
 Only cells that agree across the required hosts/opts are listed.
 
 ### int (B+)
@@ -46,7 +46,7 @@ O2 and O3 on CI must agree. Thin surface — two stable dists.
 | reverse | win | win |
 | random / patterned / sawtooth | *(UNSTABLE — dropped)* | *(partially unstable — see claim)* |
 
-soft@1.20 losses vs pdq on locked cells: **0**.  
+soft@1.20 losses vs pdq on locked cells: **0**.
 Flip history lives in the claim appendix — not retuned. Grade **A−** (second type + two opt-levels; not A++).
 
 ## Usage
@@ -61,7 +61,7 @@ geblomi::sort(v);
 ```
 
 ```bash
-g++ -O3 -std=c++20 -I public/geblomi-sort public/geblomi-sort/examples/demo.cpp -o demo && ./demo
+g++ -O3 -std=c++20 -I public/geblomi-sort examples/demo.cpp -o demo && ./demo
 ```
 
 Requirements: C++20, random-access iterators.
@@ -91,4 +91,4 @@ Third-party components (pdqsort, ska_sort) retain their original licenses — se
 
 - pdqsort — Orson Peters
 - ska_sort — Malte Skarupke
-- Geblomi probe / routing / Verge-style — project team (MIT)
+- Geblomi probe / routing / Verge-style — project team

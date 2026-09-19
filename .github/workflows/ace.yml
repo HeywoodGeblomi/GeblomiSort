@@ -1,9 +1,10 @@
 # GEB-ACE-002 Phase A — correctness + pinned bench matrix (int/int64 × O2/O3)
+# plus descriptive n=1024 routebench (210 trials).
 name: ace
 
 on:
   push:
-    branches: [main, geb-ace-001, geb-ace-002, geb-ace-002-a]
+    branches: [main, geb-ace-001, geb-ace-002, geb-ace-002-a, docs-210-bench]
   pull_request:
     branches: [main]
 
@@ -17,6 +18,38 @@ jobs:
         run: |
           g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness
           ./correctness
+
+  routebench:
+    name: Routebench (n=1024, 210 trials)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build count_routes
+        run: g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
+      - name: Run tape + routebench
+        run: |
+          ./bench/count_routes > bench/oracle.csv
+          python3 bench/routebench.py --oracle bench/oracle.csv | tee bench/routebench.out
+      - name: Check identity + geblomi_full
+        run: |
+          grep -q 'identity_tripwire,PASS' bench/routebench.out
+          grep -q 'geblomi_full' bench/routebench.out
+      - name: Optional GOLDEN cmp-column hash
+        run: |
+          EXPECT=$(tr -d ' \n\r' < bench/GOLDEN.sha256)
+          if grep -q "stable_sha256,$EXPECT" bench/routebench.out; then
+            echo "GOLDEN hash match"
+          else
+            echo "GOLDEN hash mismatch (optional; not failing the job)"
+            grep '^stable_sha256,' bench/routebench.out || true
+          fi
+      - name: Publish routebench to step summary
+        if: always()
+        run: |
+          echo "## Routebench n=1024, 210 trials (descriptive)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat bench/routebench.out >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   bench:
     name: Bench ${{ matrix.type }} -${{ matrix.opt }}

@@ -1,6 +1,12 @@
 # GeblomiSort
 
-C++20 header-only adaptive hybrid 1-D sort: probe → early-exit / Verge-style / pdqsort / ska_sort.
+C++20 header-only adaptive hybrid 1-D sort.
+
+**Include:** `#include "GeblomiSort.hpp"` with `-I public/geblomi-sort`
+
+**Routes on:** a short probe then early-exit / Verge-style / pdqsort / ska_sort.
+
+**Does not claim:** not photonic, no χ, not “beats pdq everywhere.”
 
 [![ace](https://github.com/HeywoodGeblomi/GeblomiSort/actions/workflows/ace.yml/badge.svg)](https://github.com/HeywoodGeblomi/GeblomiSort/actions/workflows/ace.yml)
 
@@ -17,11 +23,31 @@ g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness &
 # Charged bench int / int64, N=1e6, 3 trials
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench_i64.cpp -o bench_i64 && ./bench_i64
+
+# Descriptive 210-trial tape (n=1024). From repo root (see bench/README.md)
+g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
+./bench/count_routes > bench/oracle.csv
+python3 bench/routebench.py --oracle bench/oracle.csv
 ```
 
-CI: `.github/workflows/ace.yml` (matrix int/int64 × O2/O3).
+CI: `.github/workflows/ace.yml` (correctness, n=1024 routebench, charged int/int64 × O2/O3).
+
+## Bench (descriptive, n=1024, 210 trials)
+
+```
+route          mean_cmps    mean_ns    win_rate
+pdq_full         7735.44      14081     0.8095
+geblomi_full     9258.30      15190     0.1429
+std_sort_full   12146.99      20234     0.0476
+```
+
+Descriptive only. Same machine class as bench/ smoke. geblomi is between pdq and std::sort on this tape (more cmps than pdq). Not the N=1e6 charged surface. promote_ready=false for any “beats pdq” sentence.
+
+mean_ns is this runner, not portable. ska not on this tape. win_rate = fraction of trials with strictly fewest cmps (ties: pdq, then std, then geblomi — see bench/README.md).
 
 ## Locked charged surface
+
+N=1e6 locked cells — different suite than the table above.
 
 See [`docs/FIELD_LEVEL_CLAIM.md`](./docs/FIELD_LEVEL_CLAIM.md). Verdict: win = ≥1.20× faster.
 Only cells that agree across the required hosts/opts are listed.

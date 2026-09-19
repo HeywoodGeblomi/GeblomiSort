@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import subprocess
 import sys
 from pathlib import Path
 
@@ -67,12 +68,26 @@ def policy_losses(rows):
     return losses
 
 
+def ensure_oracle(path: Path) -> None:
+    if path.exists():
+        return
+    binary = Path("bench/count_routes")
+    if not binary.exists():
+        print("REFUSE: missing oracle and bench/count_routes; compile from repo root")
+        raise SystemExit(2)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        subprocess.check_call([str(binary)], stdout=f)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--oracle", required=True)
+    p.add_argument("--oracle", default="bench/oracle.csv")
     p.add_argument("--expect-hash", default="")
     args = p.parse_args()
-    rows = load_oracle(args.oracle)
+    oracle = Path(args.oracle)
+    ensure_oracle(oracle)
+    rows = load_oracle(oracle)
     if len(rows) != 210:
         print(f"REFUSE: expected 210 scored trials, got {len(rows)}")
         return 2

@@ -63,12 +63,12 @@ int main() {
 
 ## Benchmarks (reference)
 
-Machine-dependent. Measured on the release gate host, **n = 1 000 000 `int`**, `g++ -O3 -std=c++20`, best-of-several:
+Machine-dependent. Random, sawtooth, and organpipe are the release-gate host, **n = 1 000 000 `int`**, `g++ -O3 -std=c++20`, best-of-several. Sorted and reverse were remeasured after the adjacent-pair scan (KVM, Intel Xeon family 6 model 207, g++ 13.3.0 `-O3`, median of 7). The previous sorted ~0.01 ms and reverse ~0.14 ms figures sampled the array and are withdrawn.
 
 | Pattern | Geblomi | pdqsort | ska (approx) |
 |---------|---------|---------|--------------|
-| Sorted | ~0.01 ms | ~0.7 ms | ~12 ms |
-| Reverse | ~0.14 ms | ~1.4 ms | ~14 ms |
+| Sorted | 0.26 ms | 0.50 ms | 9.2 ms |
+| Reverse | 0.36 ms | 1.07 ms | 10.2 ms |
 | Random | ~15 ms | ~29 ms | ~15 ms |
 | Sawtooth | ~13 ms | ~25 ms | ~13 ms |
 | Organpipe | ~1.3–1.5 ms | ~31 ms | ~17 ms |
@@ -86,7 +86,7 @@ Expect `ALL_RELEASE_GATE_OK=1`.
 ## Limitations (honest)
 
 1. **CAP = 2** on element-span run promotion: only very few direction changes qualify for long-run Verge promotion. **3–8 reversed/interleaved long runs** may fall through to pdqsort (~10–12 ms class at 1M). Documented residual, not a silent bug.
-2. Probe is **sampling-based** — pathological adversarial layouts can mis-route (pdqsort residual still correct).
+2. Sorted and reverse are confirmed on every adjacent pair. Patterned-vs-random routing is still **sampling-based** — adversarial layouts can mis-route (pdqsort residual still sorts correctly).
 3. Ska path is aimed at **scalar integers** with default ordering; custom comparators use pdqsort.
 4. **2-D / Implosion** work is experimental and unsupported in this tag.
 

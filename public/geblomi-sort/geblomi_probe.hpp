@@ -113,21 +113,13 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
         if (strided_start > n) strided_start = n;
     }
 
-    // Sorted confirmation + tail
+    // Sorted confirmation: every adjacent pair. The head loop already
+    // checked [1, head_limit). A stride of n/64 skips inversions, so it
+    // must not confirm the early-exit. Equals are non-decreasing.
     if (all_sorted) {
         bool still = true;
-        size_t last_checked = (head_limit > 0) ? head_limit - 1 : 0;
-        for (size_t i = strided_start; i < n && still; i += stride) {
-            if (comp(*(begin + i), *(begin + (i - stride)))) {
-                still = false;
-            } else {
-                last_checked = i;
-            }
-        }
-        if (still && last_checked + 1 < n) {
-            for (size_t i = last_checked; i + 1 < n; ++i) {
-                if (comp(*(begin + (i + 1)), *(begin + i))) { still = false; break; }
-            }
+        for (size_t i = head_limit; i < n; ++i) {
+            if (comp(*(begin + i), *(begin + (i - 1)))) { still = false; break; }
         }
         if (still) {
             r.is_fully_sorted = true;
@@ -143,21 +135,12 @@ ProbeResult probe(It begin, It end, Compare comp = Compare{}) {
         all_sorted = false;
     }
 
-    // Reverse confirmation + tail
+    // Reverse confirmation: non-increasing over every adjacent pair.
+    // Equals stay on this path; reversing them still sorts under less<>.
     if (all_reverse && samples > 8) {
         bool still = true;
-        size_t last_checked = (head_limit > 0) ? head_limit - 1 : 0;
-        for (size_t i = strided_start; i < n && still; i += stride) {
-            if (comp(*(begin + (i - stride)), *(begin + i))) {
-                still = false;
-            } else {
-                last_checked = i;
-            }
-        }
-        if (still && last_checked + 1 < n) {
-            for (size_t i = last_checked; i + 1 < n; ++i) {
-                if (comp(*(begin + i), *(begin + (i + 1)))) { still = false; break; }
-            }
+        for (size_t i = head_limit; i < n; ++i) {
+            if (comp(*(begin + (i - 1)), *(begin + i))) { still = false; break; }
         }
         if (still) {
             r.is_fully_reverse = true;

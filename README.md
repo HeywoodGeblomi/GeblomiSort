@@ -102,6 +102,22 @@ See [`NON_CLAIMS.md`](./NON_CLAIMS.md).
 - `promote_ready=false` for any universal-win sentence.
 - A++ not claimed.
 
+## Where this sits: duplicate detection and lower bounds
+
+Checking whether a list has any repeats ("element distinctness") has a standard baseline: **sort, then compare neighbors**. A sorter like this one is the engine inside that baseline.
+
+In November 2026 OpenAI posted a preprint, [The matrix multiplication exponent is nine fourths](https://github.com/openai/math/tree/main/preprints/The-matrix-multiplication-exponent-is-nine-fourths-November-24-2026) ([PDF](https://raw.githubusercontent.com/openai/math/main/preprints/The-matrix-multiplication-exponent-is-nine-fourths-November-24-2026/paper.pdf)). Its proof starts from this exact baseline. It builds a sort-then-compare-neighbors network for distinctness (Section 2.2), then argues that a faster matrix multiplication would compress such networks below a proven lower bound for testing many lists at once.
+
+What that does and does not say about this project:
+
+- The bound lives in an algebraic and tensor-network model: arithmetic circuits over a field, and networks of small bit tables. It is not a bound on a CPU running integer or string keys.
+- So it **neither confirms nor rules out** any bit-level sorter speed. Radix-style and adaptive routes are outside what it measures. GeblomiSort routes on a probe, then early-exit, Verge-style, pdqsort or ska_sort (see "Routes on" above), and its claims stay the measured cells in the tables above.
+- The lower bound it uses for distinctness is small (a power of log n above linear). It does not say sorting must cost n log n in this setting.
+- The preprint is **not peer reviewed**. Its Lean check covers the division-free exponent statement, not every step. One outside audit of the Lean statement was run by AI agents, not people. Treat the result as a strong claim, not settled fact.
+- Nothing here changes the claims or non-claims of this repo. Measured results stay measured results.
+
+Author: Heywood Geblomi
+
 ## License
 
 **Dual licensed.**

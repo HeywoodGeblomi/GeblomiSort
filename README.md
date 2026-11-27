@@ -25,6 +25,7 @@ g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench_i64.cpp -o bench_i64 && ./bench_i64
 
 # Descriptive 210-trial tape (n=1024). From repo root (see bench/README.md)
+python3 bench/meter_header.py
 g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
 ./bench/count_routes > bench/oracle.csv
 python3 bench/routebench.py --oracle bench/oracle.csv
@@ -34,16 +35,19 @@ CI: `.github/workflows/ace.yml` (correctness, n=1024 routebench, charged int/int
 
 ## Bench (descriptive, n=1024, 210 trials)
 
+`geblomi_full` counts the plain `std::less<>` call (`geblomi::sort(begin, end)`). `geblomi_fallback` is a custom comparator on the same inputs: random scalars then take pdqsort, and a reversed input is re-sorted after `std::reverse`. The previous geblomi row was that fallback (mean_cmps 9258.30).
+
 ```
-route          mean_cmps    mean_ns    win_rate
-pdq_full         7735.44      14081     0.8095
-geblomi_full     9258.30      15190     0.1429
-std_sort_full   12146.99      20234     0.0476
+route               mean_cmps    mean_digits    mean_ns    win_rate
+pdq_full              7735.44           0.00      11823      0.1429
+std_sort_full        12146.99           0.00      15692      0.0000
+geblomi_full          4348.68        5283.83      19576      0.8571
+geblomi_fallback      9258.30           0.00      12167         n/a
 ```
 
-Descriptive only. Same machine class as bench/ smoke. geblomi is between pdq and std::sort on this tape (more cmps than pdq). Not the N=1e6 charged surface. promote_ready=false for any “beats pdq” sentence.
+Comparisons on the radix route are not the comparison model (digit reads are the cost there, and the log2 n! bound applies only to comparison routes).
 
-mean_ns is this runner, not portable. ska not on this tape. win_rate = fraction of trials with strictly fewest cmps (ties: pdq, then std, then geblomi — see bench/README.md).
+Descriptive only. Same machine class as bench/ smoke. Not the N=1e6 charged surface. promote_ready=false for any “beats pdq” sentence. mean_ns is this runner, not portable, and includes the bench meter. mean_digits averages all 210 trials; 120 of them (random, two-value, noisy_ramp, biased_walk) take ska_sort and the other 90 read no digits. win_rate = fraction of trials with strictly fewest comparator calls among pdq_full, std_sort_full, and geblomi_full (ties: pdq, then std, then geblomi — see bench/README.md). It does not rank digit reads. Those 120 radix trials are where geblomi_full records the fewest comparator calls; the other geblomi_full wins are the 30 sorted and 30 reverse trials, and pdq_full wins the 30 organ-pipe trials.
 
 ## Locked charged surface
 

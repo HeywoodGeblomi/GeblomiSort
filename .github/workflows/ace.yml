@@ -25,7 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build count_routes
-        run: g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
+        run: |
+          python3 bench/meter_header.py
+          g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
       - name: Run tape + routebench
         run: |
           ./bench/count_routes > bench/oracle.csv

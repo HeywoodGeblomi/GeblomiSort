@@ -25,7 +25,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build count_routes
-        run: g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
+        run: |
+          python3 bench/meter_header.py
+          g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
       - name: Run tape + routebench
         run: |
           ./bench/count_routes > bench/oracle.csv
@@ -66,8 +68,8 @@ jobs:
         run: |
           SRC=tests/bench.cpp
           if [ "${{ matrix.type }}" = "int64" ]; then SRC=tests/bench_i64.cpp; fi
-          g++ -${{ matrix.opt }} -std=c++20 -I public/geblomi-sort "$SRC" -o bench
-          ./bench | tee bench_out.txt
+          g++ -${{ matrix.opt }} -std=c++20 -I public/geblomi-sort "$SRC" -o charged_bench
+          ./charged_bench | tee bench_out.txt
       - name: Publish table to step summary
         run: |
           echo "## Bench ${{ matrix.type }} -${{ matrix.opt }} (N=1e6, 3 trials)" >> "$GITHUB_STEP_SUMMARY"

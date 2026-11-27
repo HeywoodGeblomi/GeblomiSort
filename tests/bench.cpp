@@ -1,7 +1,7 @@
 // GEB-ACE-002 Phase B+ — Pinned charged bench
 // Generators fixed. N=1e6. Three independent trials; print each + mean/range.
 // Soft@1.20 vs pdq/ska is informational — CI does not fail on losses.
-// Build: g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
+// Build: g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o charged_bench && ./charged_bench
 
 #include "GeblomiSort.hpp"
 

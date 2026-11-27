@@ -22,6 +22,9 @@ STABLE = [
     "c_pdq",
     "c_std",
     "c_geb",
+    "d_geb",
+    "c_geb_fb",
+    "geb_route",
     "r_star",
 ]
 
@@ -44,16 +47,41 @@ def mean(xs):
 
 def describe(rows):
     n = len(rows)
-    print("route,mean_cmps,mean_ns,win_rate")
-    for key, ccol, ncol in (
-        ("pdq_full", "c_pdq", "ns_pdq"),
-        ("std_sort_full", "c_std", "ns_std"),
-        ("geblomi_full", "c_geb", "ns_geb"),
+    print("route,mean_cmps,mean_digits,mean_ns,win_rate")
+    for key, ccol, dcol, ncol in (
+        ("pdq_full", "c_pdq", None, "ns_pdq"),
+        ("std_sort_full", "c_std", None, "ns_std"),
+        ("geblomi_full", "c_geb", "d_geb", "ns_geb"),
     ):
         cmps = [int(r[ccol]) for r in rows]
-        ns = [int(r[ncol]) for r in rows if ncol in r]
+        digits = [int(r[dcol]) for r in rows] if dcol else [0] * n
+        ns = [int(r[ncol]) for r in rows if ncol in r and r[ncol] != ""]
         wins = sum(1 for r in rows if r["r_star"] == key)
-        print(f"{key},{mean(cmps):.2f},{mean(ns):.0f},{wins / n:.4f}")
+        print(f"{key},{mean(cmps):.2f},{mean(digits):.2f},{mean(ns):.0f},{wins / n:.4f}")
+    fb = [int(r["c_geb_fb"]) for r in rows]
+    fb_ns = [int(r["ns_geb_fb"]) for r in rows if r.get("ns_geb_fb")]
+    print(f"geblomi_fallback,{mean(fb):.2f},0.00,{mean(fb_ns):.0f},n/a")
+    print(
+        "note,comparisons on the radix route are not the comparison model "
+        "(digit reads are the cost there, and the log2 n! bound applies only "
+        "to comparison routes)"
+    )
+    print("by_generator,generator,trials,mean_c_geb,mean_d_geb,mean_c_geb_fb,geb_route")
+    gens = []
+    for r in rows:
+        if r["generator"] not in gens:
+            gens.append(r["generator"])
+    for gen in gens:
+        sub = [r for r in rows if r["generator"] == gen]
+        routes = sorted({r["geb_route"] for r in sub})
+        route = routes[0] if len(routes) == 1 else "mixed"
+        print(
+            f"by_generator,{gen},{len(sub)},"
+            f"{mean([int(r['c_geb']) for r in sub]):.2f},"
+            f"{mean([int(r['d_geb']) for r in sub]):.2f},"
+            f"{mean([int(r['c_geb_fb']) for r in sub]):.2f},"
+            f"{route}"
+        )
 
 
 def policy_losses(rows):

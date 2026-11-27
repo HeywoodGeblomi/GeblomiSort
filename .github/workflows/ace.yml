@@ -18,6 +18,12 @@ jobs:
         run: |
           g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness
           ./correctness
+          g++ -O2 -std=c++20 -I public/geblomi-sort tests/fast_path.cpp -o fast_path
+          ./fast_path
+          g++ -O2 -std=c++20 -I public/geblomi-sort tests/pointer_sort.cpp -o pointer_sort
+          timeout 60s ./pointer_sort
+          g++ -O0 -std=c++20 -I public/geblomi-sort tests/pointer_sort.cpp -o pointer_sort_o0
+          timeout 60s ./pointer_sort_o0
 
   routebench:
     name: Routebench (n=1024, 210 trials)

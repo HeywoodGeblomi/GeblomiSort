@@ -20,6 +20,10 @@ This repository is the header, tests, and CI.
 # Correctness (oracle = std::sort; includes N=1e6)
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness && ./correctness
 
+# Sorted/reverse fast path (full adjacent scan) and raw-pointer dispatch
+g++ -O2 -std=c++20 -I public/geblomi-sort tests/fast_path.cpp -o fast_path && ./fast_path
+g++ -O2 -std=c++20 -I public/geblomi-sort tests/pointer_sort.cpp -o pointer_sort && ./pointer_sort
+
 # Charged bench int / int64, N=1e6, 3 trials
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o charged_bench && ./charged_bench
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench_i64.cpp -o bench_i64 && ./bench_i64
@@ -31,7 +35,7 @@ g++ -O2 -std=c++20 -o bench/count_routes bench/count_routes.cpp
 python3 bench/routebench.py --oracle bench/oracle.csv
 ```
 
-CI: `.github/workflows/ace.yml` (correctness, n=1024 routebench, charged int/int64 × O2/O3).
+CI: `.github/workflows/ace.yml` (correctness, sorted/reverse fast path, pointer dispatch with a timeout, n=1024 routebench, charged int/int64 × O2/O3).
 
 ## Bench (descriptive, n=1024, 210 trials)
 
@@ -78,6 +82,25 @@ O2 and O3 on CI must agree. Thin surface — two stable dists.
 
 soft@1.20 losses vs pdq on locked cells: **0**.
 Flip history lives in the claim appendix — not retuned. Grade **A−** (second type + two opt-levels; not A++).
+
+## Sorted and reverse cost
+
+Confirming sorted or reversed input walks every adjacent pair, then returns or reverses. The old check, for n > 4096, sampled every (n/64)th pair. On this host that sample reported sorted **0.003–0.010 ns/element** and reverse **0.29–0.46 ns/element**. Those figures are withdrawn.
+
+Remeasured after the full scan. int64, `g++ (Ubuntu 13.3.0) -O2 -std=c++20`, median of 7 runs, nanoseconds per element. The input copy sits outside the timer. Host: KVM guest, Intel Xeon family 6 model 207, 4 vCPU, 320 MiB L3.
+
+| n | pattern | GeblomiSort | pdqsort | std::sort |
+|------|---------|-------------|---------|-----------|
+| 1,024 | sorted | 0.54 | 0.59 | 3.78 |
+| 1,024 | reverse | 0.72 | 1.35 | 2.91 |
+| 100,000 | sorted | 0.61 | 0.50 | 6.55 |
+| 100,000 | reverse | 0.54 | 1.12 | 4.65 |
+| 10,000,000 | sorted | 1.08 | 0.67 | 11.58 |
+| 10,000,000 | reverse | 1.32 | 1.24 | 6.92 |
+
+The locked N=1e6 sorted and reverse cells above stay wins on this host (int64, -O2, same median-of-7 protocol: sorted 0.32 ns/element vs pdqsort 0.64 and ska_sort 16.6; reverse 0.83 vs pdqsort 1.23 and ska_sort 17.6). At 100,000 and 10,000,000, sorted is slower than pdqsort. Reverse stays ahead of pdqsort at 1,024 and 100,000, and is close at 10,000,000. Both patterns stay ahead of `std::sort` at every size above.
+
+Random int64 (`rand63`, uniform in `[0, 2^63)`, n = 10,000,000) measured 20.14 ns/element before the scan change and 18.75 after, beside pdqsort at 25.40. The full scan runs only after a monotone head, so random inputs do not take it.
 
 ## Usage
 

@@ -21,7 +21,7 @@ This repository is the header, tests, and CI.
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/correctness.cpp -o correctness && ./correctness
 
 # Charged bench int / int64, N=1e6, 3 trials
-g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o bench && ./bench
+g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench.cpp -o charged_bench && ./charged_bench
 g++ -O2 -std=c++20 -I public/geblomi-sort tests/bench_i64.cpp -o bench_i64 && ./bench_i64
 
 # Descriptive 210-trial tape (n=1024). From repo root (see bench/README.md)
